@@ -916,8 +916,11 @@ fetch("api/game/start", { method: "POST" })
   .then((d) => { if (d) gameSessionId = d.sessionId; })
   .catch(() => {});
 
-refreshLeaderboard();
+// Paint both boards' blank rows synchronously first so the Classic board fills in
+// place when the fetch resolves, instead of popping in from an empty (zero-height) state.
+renderBoard(leaderboardList, [], null);
 renderBoard(remixLeaderboardList, [], null);
+refreshLeaderboard();
 
 // Audio: SFX synthesised via Web Audio, the accelerating march beat, the saucer
 // drone, looping menu music, and HUD mute/volume controls for music and SFX.
