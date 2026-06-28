@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" style="background:#000">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Astro Siege</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hud hud-top">
+    <div class="hud-inner">
+      <span class="hud-group">
+        <span class="hud-label">Score</span>
+        <span id="score-value" class="hud-value">0</span>
+      </span>
+      <span class="hud-group">
+        <span class="hud-label">Hi-Score</span>
+        <span id="hiscore-value" class="hud-value">0</span>
+      </span>
+      <span class="hud-group">
+        <span class="hud-label">Wave</span>
+        <span id="wave-value" class="hud-value">1</span>
+      </span>
+      <span class="hud-group">
+        <span class="hud-label">Lives</span>
+        <span id="lives" class="lives"></span>
+      </span>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="play-area">
+      <!-- Canvas internal size is set in game.js from the logical grid; CSS scales it. -->
+      <canvas id="game" tabindex="0"></canvas>
+
+      <div id="overlay" class="overlay">
+        <div class="overlay-content">
+          <h1 id="overlay-title">ASTRO SIEGE</h1>
+
+          <div class="menu-row">
+            <div class="menu-cards">
+              <div id="instructions-col" class="menu-col">
+              <h2 class="menu-col-title">Instructions</h2>
+              <div class="menu-controls">
+                <span class="mc-keys"><span class="key-cap">A</span><span class="key-cap">D</span><span class="key-sep">/</span><span class="key-cap">&larr;</span><span class="key-cap">&rarr;</span></span>
+                <span class="mc-label">Move</span>
+                <span class="mc-keys"><span class="key-cap">Space</span><span class="key-sep">/</span><span class="key-cap">&uarr;</span></span>
+                <span class="mc-label">Shoot</span>
+                <span class="mc-keys"><span class="key-cap">Esc</span></span>
+                <span class="mc-label">Pause</span>
+              </div>
+            </div>
+            <div class="menu-col">
+              <h2 class="menu-col-title">Play</h2>
+              <div class="menu-actions">
+                <p id="overlay-text"></p>
+                <div id="score-form" class="score-form hidden">
+                  <input id="player-name" class="name-input" type="text" maxlength="24"
+                         placeholder="Enter your name" autocomplete="off">
+                  <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+                </div>
+                <div class="overlay-buttons">
+                  <button id="overlay-button">Classic</button>
+                  <button id="remix-button" class="overlay-remix" title="Coming soon">Remix</button>
+                  <button id="main-menu-button" class="hidden">Main Menu</button>
+                </div>
+              </div>
+            </div>
+            </div>
+          </div>
+
+          <div class="leaderboards">
+            <section class="leaderboard-section">
+              <h2 class="leaderboard-title">Classic Leaderboard</h2>
+              <ol id="leaderboard-list" class="leaderboard-list"></ol>
+            </section>
+            <section class="leaderboard-section">
+              <h2 class="leaderboard-title">Remix Leaderboard</h2>
+              <ol id="remix-leaderboard-list" class="leaderboard-list"></ol>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="hud hud-bottom">
+    <div class="hud-inner">
+      <span class="hud-controls">
+        <span class="key-hint"><span class="key-cap">A</span><span class="key-cap">D</span><span class="key-sep">/</span><span class="key-cap">&larr;</span><span class="key-cap">&rarr;</span><span class="kh-word">Move</span></span>
+        <span class="key-hint"><span class="key-cap">Space</span><span class="key-sep">/</span><span class="key-cap">&uarr;</span><span class="kh-word">Shoot</span></span>
+        <span class="key-hint"><span class="key-cap">Esc</span><span class="kh-word">Pause</span></span>
+      </span>
+      <span class="hud-sound-group">
+        <span class="hud-sound">
+          <span class="hud-label">Music</span>
+          <button id="music-mute-btn" class="sound-btn" type="button" title="Mute / unmute music">&#128266;</button>
+          <input id="music-slider" class="volume-slider" type="range" min="0" max="100" value="10" title="Music volume">
+        </span>
+        <span class="hud-sound">
+          <span class="hud-label">SFX</span>
+          <button id="sfx-mute-btn" class="sound-btn" type="button" title="Mute / unmute sound effects">&#128266;</button>
+          <input id="sfx-slider" class="volume-slider" type="range" min="0" max="100" value="10" title="Sound-effect volume">
+        </span>
+      </span>
+    </div>
+  </footer>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>

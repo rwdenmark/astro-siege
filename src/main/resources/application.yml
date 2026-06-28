@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: astro-siege
+
+  datasource:
+    url: jdbc:h2:mem:astrosiege;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  # Dev uses H2 built by Hibernate ddl-auto; Flyway owns the prod schema only.
+  flyway:
+    enabled: false
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+server:
+  port: ${PORT:8080}
+  # Gzip the text assets (JS/CSS/HTML/JSON) so the first load transfers less.
+  compression:
+    enabled: true
+    mime-types: text/html,text/css,text/javascript,application/javascript,application/json,image/svg+xml
+    min-response-size: 1024
+  # Root by default; set APP_BASE_PATH to serve under a subpath behind the Funnel.
+  servlet:
+    context-path: ${APP_BASE_PATH:}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  # Flyway owns the schema; Hibernate only validates the mapping (ddl-auto below).
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+
+  h2:
+    console:
+      enabled: false

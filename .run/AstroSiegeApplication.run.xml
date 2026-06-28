@@ -1,0 +1,12 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="AstroSiegeApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
+    <option name="FRAME_DEACTIVATION_UPDATE_POLICY" value="UpdateClassesAndResources" />
+    <module name="astro-siege" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.astrosiege.AstroSiegeApplication" />
+    <!-- Silences the Tomcat JNI "restricted method in java.lang.System" warning on newer JDKs. -->
+    <option name="VM_PARAMETERS" value="--enable-native-access=ALL-UNNAMED" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

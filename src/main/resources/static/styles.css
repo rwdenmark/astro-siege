@@ -1,0 +1,525 @@
+:root {
+  --bg: #000000;
+  --fg: #e6e6e6;
+  --green: #4dff5a;
+  --dim: #6f7d6f;
+  --accent: #ff4d4d;
+  --panel: rgba(8, 12, 8, 0.92);
+  --mono: "Press Start 2P", "Courier New", ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+}
+
+/* Pin the app to the viewport so nothing can scroll off; the canvas absorbs slack. */
+body {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  letter-spacing: 0.04em;
+}
+
+/* ---- HUD bars (top + bottom). One row each, never wrapping. ---- */
+.hud {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  background: #020402;
+  flex: 0 0 auto;
+}
+
+.hud-top {
+  border-bottom: 2px solid #103010;
+}
+
+.hud-bottom {
+  border-top: 2px solid #103010;
+}
+
+.hud-inner {
+  width: 100%;
+  max-width: 960px;
+  display: flex;
+  gap: clamp(10px, 1.6vw, 24px);
+  align-items: center;
+  justify-content: space-between;
+  padding: clamp(7px, 1.3vh, 13px) clamp(12px, 2vw, 22px);
+  flex-wrap: nowrap;
+}
+
+/* Each stat sits on a single line: "SCORE 0". */
+.hud-group {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: clamp(6px, 1vw, 10px);
+  white-space: nowrap;
+}
+
+.hud-label {
+  font-size: clamp(10px, 2.1vmin, 14px);
+  color: var(--dim);
+  text-transform: uppercase;
+}
+
+.hud-value {
+  font-size: clamp(14px, 3vmin, 22px);
+  color: var(--green);
+}
+
+.lives {
+  display: inline-flex;
+  gap: clamp(4px, 1vmin, 7px);
+  min-height: 16px;
+}
+
+.life-icon {
+  width: clamp(18px, 3.6vmin, 27px);
+  height: auto;
+  image-rendering: pixelated;
+}
+
+/* ---- Key instructions (bottom-left), single row ---- */
+.hud-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(8px, 1.4vw, 18px);
+  flex-wrap: nowrap;
+}
+
+.key-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: clamp(10px, 2vmin, 13px);
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.key-cap {
+  display: inline-block;
+  border: 1px solid var(--green);
+  color: var(--green);
+  border-radius: 3px;
+  padding: clamp(3px, 0.7vmin, 4px) clamp(4px, 1vmin, 6px);
+  font-size: clamp(8px, 1.8vmin, 12px);
+  line-height: 1;
+}
+
+/* ---- Stage: fills the space between the bars; symmetric vertical padding is the
+        equal buffer above and below the game. The canvas is sized by game.js to fit. ---- */
+.stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(6px, 1.8vh, 22px) clamp(6px, 2vw, 16px);
+}
+
+.play-area {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+canvas#game {
+  display: block;
+  background: #000;
+  border: 2px solid #103010;
+  image-rendering: pixelated;
+  /* game.js sets the exact width/height to fit the stage. These caps just keep it
+     on screen before the script runs and if it ever doesn't. */
+  max-width: 96vw;
+  max-height: 88vh;
+  touch-action: none;
+}
+
+canvas#game:focus {
+  outline: none;
+  border-color: #1c5a1c;
+}
+
+/* ---- Overlay: fills the whole play area as a vertical column, title at the top,
+        leaderboard at the bottom. Never scrolls (overflow hidden + compact sizing). ---- */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.82);
+  backdrop-filter: blur(1px);
+  overflow: hidden;
+  container-type: size;
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.overlay-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: clamp(9px, 3cqmin, 28px);
+  width: 100%;
+  height: 100%;
+  padding: clamp(11px, 4cqmin, 40px) clamp(12px, 4cqmin, 44px) clamp(12px, 3.3cqmin, 34px);
+  line-height: normal;
+}
+
+#overlay-title {
+  color: var(--green);
+  font-size: clamp(32px, 6.7cqmin, 60px);
+  margin: 0;
+  white-space: nowrap;
+  text-shadow: 0 0 12px rgba(77, 255, 90, 0.5);
+}
+
+#overlay-text {
+  color: var(--fg);
+  font-size: clamp(13px, 2cqmin, 18px);
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* Collapse the game-over message line when it's empty (the main menu). */
+#overlay-text:empty {
+  display: none;
+}
+
+/* Main-menu instructions: a tidy two-column grid (keys | action) so every keycap
+   and every label lines up vertically. */
+.menu-controls {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-content: start;
+  column-gap: clamp(13px, 3.3cqmin, 30px);
+  row-gap: clamp(8px, 1.77cqmin, 16px);
+}
+
+.mc-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(5px, 1vmin, 8px);
+  justify-content: flex-start;
+}
+
+.key-sep {
+  color: var(--dim);
+  font-size: clamp(10px, 2vmin, 13px);
+  padding: 0 1px;
+}
+
+.menu-controls .key-sep {
+  font-size: clamp(11px, 1.7cqmin, 15px);
+}
+
+.mc-label {
+  font-size: clamp(11px, 1.7cqmin, 15px);
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: left;
+}
+
+.menu-controls .key-cap {
+  font-size: clamp(11px, 1.7cqmin, 15px);
+  min-width: 1.7em;
+  padding: clamp(5px, 0.8cqmin, 8px) clamp(6px, 1.1cqmin, 11px);
+  text-align: center;
+  background: rgba(77, 255, 90, 0.08);
+  border: 1px solid var(--green);
+  border-radius: 4px;
+  box-shadow: 0 2px 0 rgba(77, 255, 90, 0.25), inset 0 0 6px rgba(77, 255, 90, 0.10);
+}
+
+#overlay-text b {
+  color: var(--green);
+}
+
+button {
+  font-family: var(--mono);
+  cursor: pointer;
+  border: 2px solid var(--green);
+  background: transparent;
+  color: var(--green);
+  padding: clamp(9px, 1.7cqmin, 16px) clamp(16px, 3.8cqmin, 34px);
+  font-size: clamp(13px, 2cqmin, 18px);
+  transition: background 0.12s, color 0.12s;
+}
+
+button:hover {
+  background: var(--green);
+  color: #021002;
+}
+
+.overlay-secondary {
+  border-color: var(--dim);
+  color: var(--fg);
+  font-size: clamp(11px, 1.6cqmin, 14px);
+  padding: clamp(8px, 1.35cqmin, 13px) clamp(12px, 1.77cqmin, 16px);
+}
+
+.score-form {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: clamp(7px, 1.35cqmin, 12px);
+}
+
+.score-form .overlay-secondary {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.score-form.hidden {
+  display: none;
+}
+
+.name-input {
+  font-family: var(--mono);
+  background: #020402;
+  border: 2px solid var(--dim);
+  color: var(--fg);
+  padding: clamp(8px, 1.35cqmin, 13px) 12px;
+  font-size: clamp(11px, 1.6cqmin, 14px);
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.name-input:focus {
+  outline: none;
+  border-color: var(--green);
+}
+
+/* ---- Leaderboard (bottom of the overlay) ---- */
+.leaderboard-section {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 460px;
+  background: var(--panel);
+  border: 2px solid #103010;
+  padding: clamp(10px, 2cqmin, 18px) clamp(12px, 2.45cqmin, 22px);
+}
+
+.leaderboard-title {
+  color: var(--green);
+  font-size: clamp(13px, 2cqmin, 18px);
+  margin: 0 0 clamp(8px, 1.45cqmin, 14px);
+  text-align: center;
+}
+
+.leaderboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(4px, 0.8cqmin, 8px);
+}
+
+.leaderboard-list li {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  font-size: clamp(11px, 1.6cqmin, 14px);
+  padding: clamp(4px, 0.7cqmin, 7px) 0;
+  border-bottom: 1px solid #0c1c0c;
+}
+
+.leaderboard-list .rank {
+  color: var(--dim);
+}
+
+.leaderboard-list .name {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-list .points {
+  color: var(--green);
+}
+
+.leaderboard-list .wave {
+  color: var(--dim);
+}
+
+.leaderboard-offline {
+  font-size: 10px;
+  color: var(--dim);
+  text-align: center;
+  margin-top: 8px;
+}
+
+/* ---- Sound controls (bottom-right), single row ---- */
+.hud-sound-group {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(12px, 2vw, 22px);
+  flex-wrap: nowrap;
+}
+
+.hud-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: clamp(6px, 1.1vw, 9px);
+  white-space: nowrap;
+}
+
+.sound-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: clamp(15px, 3vmin, 20px);
+  line-height: 1;
+  padding: 0;
+  filter: grayscale(1);
+}
+
+.sound-btn:hover {
+  filter: none;
+  background: transparent;
+}
+
+.volume-slider {
+  width: clamp(56px, 10vmin, 96px);
+  accent-color: var(--green);
+  cursor: pointer;
+}
+
+/* ---- Start-screen layout: instructions on the left, actions on the right ---- */
+.menu-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The actual side-by-side card group (equal height via stretch). */
+.menu-cards {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: clamp(11px, 2.45cqmin, 24px);
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+/* Each column: a green section title above its content. */
+.menu-col {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: clamp(260px, 42%, 380px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(9px, 1.77cqmin, 16px);
+  background: var(--panel);
+  border: 2px solid #103010;
+  padding: clamp(10px, 2cqmin, 18px) clamp(12px, 2.45cqmin, 22px);
+}
+
+.menu-col.hidden {
+  display: none;
+}
+
+.menu-col-title {
+  color: var(--green);
+  font-size: clamp(13px, 2cqmin, 18px);
+  margin: 0;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.menu-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(9px, 1.77cqmin, 16px);
+}
+
+/* Classic + Remix stacked vertically, equal width. */
+.overlay-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: clamp(9px, 1.77cqmin, 16px);
+}
+
+/* Remix is a placeholder for now: dimmed to read as not-yet-active. */
+.overlay-remix {
+  border-color: var(--dim);
+  color: var(--dim);
+}
+
+.overlay-remix:hover {
+  background: transparent;
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
+/* ---- Two leaderboards, side by side, lifted off the bottom floor line ---- */
+.leaderboards {
+  flex: 0 0 auto;
+  display: flex;
+  gap: clamp(11px, 2.45cqmin, 24px);
+  width: 100%;
+  justify-content: center;
+  align-items: flex-start;
+  margin-bottom: clamp(16px, 4cqb, 32px);
+}
+
+/* ---- Game-over card: roomier, no column header, two clear action groups ---- */
+.overlay.gameover .menu-col-title {
+  display: none;
+}
+
+.overlay.gameover .menu-col {
+  max-width: clamp(300px, 82%, 460px);
+}
+
+.overlay.gameover #overlay-text {
+  text-align: center;
+}
+
+/* Separate "submit your score" from "play again / remix" with a faint divider. */
+.overlay.gameover .overlay-buttons {
+  margin-top: clamp(4px, 1.1cqmin, 12px);
+  padding-top: clamp(9px, 1.77cqmin, 16px);
+  border-top: 1px solid #103010;
+}
+
+/* Toggled game-over button (Remix hides, Main Menu shows). */
+.overlay-buttons .hidden {
+  display: none;
+}
+
+/* A little breathing room between the bottom-bar keys and their action word. */
+.kh-word {
+  margin-left: clamp(4px, 0.8vw, 8px);
+}
