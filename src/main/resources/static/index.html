@@ -30,7 +30,7 @@
   </header>
 
   <main class="stage">
-    <div class="play-area">
+    <div class="play-area" id="app">
       <!-- Canvas internal size is set in game.js from the logical grid; CSS scales it. -->
       <canvas id="game" tabindex="0"></canvas>
 
@@ -40,33 +40,49 @@
 
           <div class="menu-row">
             <div class="menu-cards">
-              <div id="instructions-col" class="menu-col">
-              <h2 class="menu-col-title">Instructions</h2>
-              <div class="menu-controls">
-                <span class="mc-keys"><span class="key-cap">A</span><span class="key-cap">D</span><span class="key-sep">/</span><span class="key-cap">&larr;</span><span class="key-cap">&rarr;</span></span>
-                <span class="mc-label">Move</span>
-                <span class="mc-keys"><span class="key-cap">Space</span><span class="key-sep">/</span><span class="key-cap">&uarr;</span></span>
-                <span class="mc-label">Shoot</span>
-                <span class="mc-keys"><span class="key-cap">Esc</span></span>
-                <span class="mc-label">Pause</span>
-              </div>
-            </div>
-            <div class="menu-col">
-              <h2 class="menu-col-title">Play</h2>
-              <div class="menu-actions">
-                <p id="overlay-text"></p>
-                <div id="score-form" class="score-form hidden">
-                  <input id="player-name" class="name-input" type="text" maxlength="24"
-                         placeholder="Enter your name" autocomplete="off">
-                  <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+              <div class="menu-top menu-only">
+                <div id="instructions-col" class="menu-col">
+                  <h2 class="menu-col-title">Instructions</h2>
+                  <div class="menu-controls">
+                    <span class="mc-keys"><span class="key-cap">A</span><span class="key-cap">D</span><span class="key-sep">/</span><span class="key-cap">&larr;</span><span class="key-cap">&rarr;</span></span>
+                    <span class="mc-label">Move</span>
+                    <span class="mc-keys"><span class="key-cap">Space</span><span class="key-sep">/</span><span class="key-cap">&uarr;</span></span>
+                    <span class="mc-label">Shoot</span>
+                    <span class="mc-keys"><span class="key-cap">Esc</span></span>
+                    <span class="mc-label">Pause</span>
+                  </div>
                 </div>
-                <div class="overlay-buttons">
-                  <button id="overlay-button">Classic</button>
-                  <button id="remix-button" class="overlay-remix" title="Coming soon">Remix</button>
-                  <button id="main-menu-button" class="hidden">Main Menu</button>
+
+                <div id="mode-col" class="menu-col">
+                  <h2 class="menu-col-title">Mode</h2>
+                  <div class="overlay-buttons">
+                    <button id="mode-classic" class="mode-option selected" type="button">Classic</button>
+                    <button id="mode-remix" class="mode-option" type="button">Remix</button>
+                  </div>
                 </div>
               </div>
-            </div>
+
+              <div id="play-col" class="menu-col menu-only play-bar">
+                <h2 class="menu-col-title">Play</h2>
+                <div class="menu-actions">
+                  <button id="start-button" type="button">Start</button>
+                </div>
+              </div>
+
+              <div id="gameover-col" class="menu-col gameover-only">
+                <div class="menu-actions">
+                  <p id="overlay-text"></p>
+                  <div id="score-form" class="score-form hidden">
+                    <input id="player-name" class="name-input" type="text" maxlength="24"
+                           placeholder="Enter your name" autocomplete="off">
+                    <button id="submit-score-button" class="overlay-secondary">Submit score</button>
+                  </div>
+                  <div class="overlay-buttons">
+                    <button id="play-again-button" type="button">Play again</button>
+                    <button id="main-menu-button" type="button">Main Menu</button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 

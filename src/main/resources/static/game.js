@@ -330,7 +330,12 @@ function stepInterval() {
 
 // Input
 const keys = new Set();
+function typingInField(e) {
+  const el = e.target;
+  return el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+}
 window.addEventListener("keydown", (e) => {
+  if (typingInField(e)) return; // let the name field handle Space/Enter while it has focus
   const k = e.key.toLowerCase();
   if (["arrowleft", "arrowright", "arrowup", " ", "spacebar"].includes(k)) {
     e.preventDefault();
@@ -360,15 +365,18 @@ function fireHeld() { return keys.has("space") || keys.has("arrowup"); }
 function pauseGame() {
   state.mode = "paused";
   stopUfoSound(); // silence the saucer drone while paused
+  if (gameMode === "remix") stopRemixMusic();
 }
 function resumeGame() {
   state.mode = "playing";
   lastT = performance.now(); // don't let the paused span become one huge dt step
   if (state.ufo) startUfoSound();
+  if (gameMode === "remix") resumeRemixMusic();
   canvas.focus();
 }
 
 function startGame() {
+  gameMode = selectedMode;
   state.mode = "playing";
   state.score = 0;
   state.wave = 1;
@@ -386,10 +394,20 @@ function startGame() {
   state.invul = 0;
   state.startedAt = performance.now();
   scoreAlreadySubmitted = false;
-  buildFleet();
-  buildBunkers();
+  // Fresh server-timed session per run, so each run can submit its own score.
+  fetch("api/game/start", { method: "POST" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => { if (d) gameSessionId = d.sessionId; })
+    .catch(() => {});
+  if (gameMode === "remix") {
+    startRemix();
+  } else {
+    buildFleet();
+    buildBunkers();
+  }
   hideOverlay();
   pauseMusic();
+  if (gameMode === "remix") startRemixMusic();
   updateHud();
   canvas.focus();
 }
@@ -427,6 +445,7 @@ function gameOver() {
   }
   lastRunDurationSeconds = Math.max(0, Math.round((performance.now() - state.startedAt) / 1000));
   showGameOverOverlay();
+  stopRemixMusic();
   playMenuMusic();
   updateHud();
 }
@@ -666,30 +685,101 @@ function addBoom(x, y) {
   state.booms.push({ x, y, t: 0.3 });
 }
 
+// Shared scrolling starfield: the background for the menu and both game modes.
+const starfield = [];
+for (let i = 0; i < 64; i++) {
+  starfield.push({ x: Math.random() * WIDTH, y: Math.random() * HEIGHT, s: 5 + Math.random() * 18, bright: Math.random() < 0.3 });
+}
+function updateStarfield(dt) {
+  for (const st of starfield) {
+    st.y += st.s * dt;
+    if (st.y > HEIGHT) { st.y = 0; st.x = Math.random() * WIDTH; }
+  }
+}
+function drawStars() {
+  for (const st of starfield) {
+    ctx.fillStyle = st.bright ? "#ffffff" : "#6f7d6f";
+    ctx.fillRect(Math.round(st.x), Math.round(st.y), 1, 1);
+  }
+}
+
+// Eye/visor gap per classic orb type, punched crisp and dark on top of the glow.
+const CLASSIC_EYE = {
+  orbSmall: { x: 3, y: 3, w: 2, h: 2 },
+  orbMid: { x: 4, y: 4, w: 3, h: 1 },
+  orbLarge: { x: 4, y: 4, w: 4, h: 1 },
+};
+
+// Fully-enclosed holes of a sprite (a 0 with a lit pixel in all four directions), e.g.
+// the UFO windows, so the glow can be punched out of them. Open gaps like the leg gap
+// underneath the saucer and the outer edges are excluded.
+function interiorHoles(bitmap) {
+  const holes = [];
+  const h = bitmap.length;
+  for (let y = 1; y < h - 1; y++) {
+    const row = bitmap[y];
+    for (let x = 1; x < row.length - 1; x++) {
+      if (row[x] !== "0") continue;
+      let left = false, right = false, up = false, down = false;
+      for (let i = 0; i < x; i++) if (row[i] === "1") { left = true; break; }
+      for (let i = x + 1; i < row.length; i++) if (row[i] === "1") { right = true; break; }
+      for (let j = 0; j < y; j++) if (bitmap[j][x] === "1") { up = true; break; }
+      for (let j = y + 1; j < h; j++) if (bitmap[j][x] === "1") { down = true; break; }
+      if (left && right && up && down) holes.push({ x, y });
+    }
+  }
+  return holes;
+}
+const UFO_HOLES = interiorHoles(SPRITES.ufo[0]);
+
 // Render
 function render() {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  drawStars();
+  if (state.mode === "menu") return; // stars-only behind the menu overlay
 
   ctx.fillStyle = COLORS.player;
   ctx.fillRect(0, GROUND_Y, WIDTH, 1);
 
+  // Glow the structures and ships (kept off the bullets/bombs below).
+  ctx.shadowBlur = 6;
+
+  ctx.shadowColor = COLORS.player;
   for (const bk of bunkers) ctx.drawImage(bk.canvas, bk.x, bk.y);
 
-  if (state.ufo) drawSprite("ufo", 0, state.ufo.x, UFO_Y);
+  if (state.ufo) { ctx.shadowColor = COLORS.ufo; drawSprite("ufo", 0, state.ufo.x, UFO_Y); }
 
-  if (state.mode !== "menu") {
-    for (const enemy of state.enemies) {
-      if (!enemy.alive) continue;
-      const b = enemyBox(enemy);
-      drawSprite(enemy.type, state.fleetFrame, b.x, b.y);
-    }
+  for (const enemy of state.enemies) {
+    if (!enemy.alive) continue;
+    const b = enemyBox(enemy);
+    ctx.shadowColor = COLORS[enemy.type];
+    drawSprite(enemy.type, state.fleetFrame, b.x, b.y);
   }
 
   // Player (blinks briefly after a hit).
   if (state.mode === "playing" || state.mode === "gameover") {
     const blink = state.invul > 0 && Math.floor(state.invul * 10) % 2 === 0;
-    if (!blink) drawSprite("player", 0, state.player.x, PLAYER_Y);
+    if (!blink) { ctx.shadowColor = COLORS.player; drawSprite("player", 0, state.player.x, PLAYER_Y); }
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+
+  // Keep each enemy's eye/visor crisp and dark on top of the glow.
+  ctx.fillStyle = "#000";
+  for (const enemy of state.enemies) {
+    if (!enemy.alive) continue;
+    const e = CLASSIC_EYE[enemy.type];
+    if (!e) continue;
+    const b = enemyBox(enemy);
+    ctx.fillRect(Math.round(b.x) + e.x, Math.round(b.y) + e.y, e.w, e.h);
+  }
+
+  // Keep the UFO windows dark on top of the glow.
+  if (state.ufo) {
+    ctx.fillStyle = "#000";
+    for (const h of UFO_HOLES) ctx.fillRect(Math.round(state.ufo.x) + h.x, UFO_Y + h.y, 1, 1);
   }
 
   if (state.bullet) {
@@ -729,8 +819,14 @@ function frame(now) {
   let dt = (now - lastT) / 1000;
   lastT = now;
   if (dt > 0.05) dt = 0.05; // clamp after tab switches
-  update(dt);
-  render();
+  updateStarfield(dt); // stars scroll on the menu and in both modes
+  if (gameMode === "remix") {
+    remixUpdate(dt);
+    remixRender();
+  } else {
+    update(dt);
+    render();
+  }
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
@@ -753,15 +849,18 @@ const lifeIconUrl = (() => {
   return big.toDataURL();
 })();
 
+let hudLives = -1;
 function updateHud() {
   scoreValue.textContent = state.score;
   hiScoreValue.textContent = state.hiScore;
   waveValue.textContent = state.wave;
+  if (state.lives === hudLives) return; // only rebuild the icons when the count changes
   let html = "";
   for (let i = 0; i < state.lives; i++) {
     html += `<img class="life-icon" src="${lifeIconUrl}" alt="life">`;
   }
   livesEl.innerHTML = html;
+  hudLives = state.lives;
 }
 updateHud();
 
@@ -769,36 +868,84 @@ updateHud();
 const overlay = document.getElementById("overlay");
 const overlayTitle = document.getElementById("overlay-title");
 const overlayText = document.getElementById("overlay-text");
-const overlayButton = document.getElementById("overlay-button");
+const startButton = document.getElementById("start-button");
+const playAgainButton = document.getElementById("play-again-button");
 const scoreForm = document.getElementById("score-form");
 const playerNameInput = document.getElementById("player-name");
 const submitScoreButton = document.getElementById("submit-score-button");
 const leaderboardList = document.getElementById("leaderboard-list");
-const remixButton = document.getElementById("remix-button");
+const modeClassicButton = document.getElementById("mode-classic");
+const modeRemixButton = document.getElementById("mode-remix");
 const mainMenuButton = document.getElementById("main-menu-button");
-const instructionsCol = document.getElementById("instructions-col");
 const remixLeaderboardList = document.getElementById("remix-leaderboard-list");
 
 let lastRunDurationSeconds = 0;
 let scoreAlreadySubmitted = false;
 // Set from POST /api/game/start so the server can time the run. Sent with the score.
 let gameSessionId = null;
+// Picked on the menu. Choosing a mode only highlights it; Start (or Enter/Space)
+// begins the run.
+let selectedMode = "classic";
+let gameMode = "classic"; // the mode the current run is actually using
 
-overlayButton.addEventListener("click", startGame);
+// The instructions panel shows the controls for the currently selected mode.
+const menuControlsEl = document.querySelector("#instructions-col .menu-controls");
+const INSTRUCTIONS = {
+  classic:
+    '<span class="mc-keys"><span class="key-cap">A</span><span class="key-cap">D</span><span class="key-sep">/</span><span class="key-cap">&larr;</span><span class="key-cap">&rarr;</span></span>' +
+    '<span class="mc-label">Move</span>' +
+    '<span class="mc-keys"><span class="key-cap">Space</span><span class="key-sep">/</span><span class="key-cap">&uarr;</span></span>' +
+    '<span class="mc-label">Shoot</span>' +
+    '<span class="mc-keys"><span class="key-cap">Esc</span></span>' +
+    '<span class="mc-label">Pause</span>',
+  remix:
+    '<span class="mc-keys"><span class="key-cap">Mouse</span></span>' +
+    '<span class="mc-label">Aim</span>' +
+    '<span class="mc-keys"><span class="key-cap">Hold click</span></span>' +
+    '<span class="mc-label">Fire</span>' +
+    '<span class="mc-keys"><span class="key-cap">Esc</span></span>' +
+    '<span class="mc-label">Pause</span>',
+};
+// The always-visible bottom control bar mirrors the selected mode too.
+const hudControlsEl = document.querySelector(".hud-controls");
+const HUD_HINTS = {
+  classic:
+    '<span class="key-hint"><span class="key-cap">A</span><span class="key-cap">D</span><span class="key-sep">/</span><span class="key-cap">&larr;</span><span class="key-cap">&rarr;</span><span class="kh-word">Move</span></span>' +
+    '<span class="key-hint"><span class="key-cap">Space</span><span class="key-sep">/</span><span class="key-cap">&uarr;</span><span class="kh-word">Shoot</span></span>' +
+    '<span class="key-hint"><span class="key-cap">Esc</span><span class="kh-word">Pause</span></span>',
+  remix:
+    '<span class="key-hint"><span class="key-cap">Mouse</span><span class="kh-word">Aim</span></span>' +
+    '<span class="key-hint"><span class="key-cap">Hold click</span><span class="kh-word">Fire</span></span>' +
+    '<span class="key-hint"><span class="key-cap">Esc</span><span class="kh-word">Pause</span></span>',
+};
+function updateInstructions() {
+  if (menuControlsEl) menuControlsEl.innerHTML = INSTRUCTIONS[selectedMode] || INSTRUCTIONS.classic;
+  if (hudControlsEl) hudControlsEl.innerHTML = HUD_HINTS[selectedMode] || HUD_HINTS.classic;
+}
+
+function selectMode(mode) {
+  if (mode !== "classic" && mode !== "remix") return;
+  selectedMode = mode;
+  modeClassicButton.classList.toggle("selected", mode === "classic");
+  if (modeRemixButton) modeRemixButton.classList.toggle("selected", mode === "remix");
+  updateInstructions();
+}
+
+startButton.addEventListener("click", () => { playMenuSfx(); startGame(); });
+if (playAgainButton) playAgainButton.addEventListener("click", () => { playMenuSfx(); startGame(); });
 submitScoreButton.addEventListener("click", submitScore);
-if (mainMenuButton) mainMenuButton.addEventListener("click", showMainMenu);
+modeClassicButton.addEventListener("click", () => { playMenuSfx(); selectMode("classic"); });
+if (modeRemixButton) modeRemixButton.addEventListener("click", () => { playMenuSfx(); selectMode("remix"); });
+if (mainMenuButton) mainMenuButton.addEventListener("click", () => { playMenuSfx(); showMainMenu(); });
 
 function hideOverlay() {
   overlay.classList.add("hidden");
 }
 function showGameOverOverlay() {
   overlayTitle.textContent = "GAME OVER";
-  if (instructionsCol) instructionsCol.classList.add("hidden");
+  // The .gameover class swaps the menu columns for the game-over panel via CSS.
   overlay.classList.add("gameover");
-  if (remixButton) remixButton.classList.add("hidden");
-  if (mainMenuButton) mainMenuButton.classList.remove("hidden");
   overlayText.innerHTML = `You scored <b>${state.score}</b> and reached <b>wave ${state.wave}</b>.`;
-  overlayButton.textContent = "Play again";
   scoreForm.classList.remove("hidden");
   submitScoreButton.disabled = false;
   submitScoreButton.textContent = "Submit score";
@@ -826,26 +973,30 @@ function showMainMenu() {
   overlayTitle.textContent = "ASTRO SIEGE";
   overlayText.innerHTML = "";
   scoreForm.classList.add("hidden");
-  overlayButton.textContent = "Classic";
-  if (instructionsCol) instructionsCol.classList.remove("hidden");
-  if (remixButton) remixButton.classList.remove("hidden");
-  if (mainMenuButton) mainMenuButton.classList.add("hidden");
+  selectMode("classic");
   overlay.classList.remove("hidden");
 
   scoreAlreadySubmitted = false;
+  stopRemixMusic();
   if (music && music.paused) playMenuMusic();
   refreshLeaderboard();
 }
 
 async function refreshLeaderboard() {
+  await Promise.all([
+    loadBoard("classic", leaderboardList),
+    loadBoard("remix", remixLeaderboardList),
+  ]);
+}
+
+async function loadBoard(mode, listEl) {
   try {
-    const res = await fetch("api/scores/top?limit=10");
+    const res = await fetch("api/scores/top?limit=10&mode=" + mode);
     if (!res.ok) throw new Error("HTTP " + res.status);
-    const scores = await res.json();
-    renderBoard(leaderboardList, scores, null);
+    renderBoard(listEl, await res.json(), null);
   } catch (err) {
-    console.warn("Leaderboard fetch failed:", err);
-    renderBoard(leaderboardList, [], "Leaderboard offline - run the backend to submit scores.");
+    console.warn("Leaderboard fetch failed (" + mode + "):", err);
+    renderBoard(listEl, [], "Leaderboard offline - run the backend to submit scores.");
   }
 }
 
@@ -890,6 +1041,7 @@ async function submitScore() {
         wave: state.wave,
         durationSeconds: lastRunDurationSeconds,
         sessionId: gameSessionId,
+        mode: gameMode,
       }),
     });
     if (res.status === 400) {
@@ -950,7 +1102,57 @@ function effMusic() { return musicMuted ? 0 : musicVolume * MUSIC_GAIN; }
 function applyMusicVol() { if (music) music.volume = effMusic(); }
 function playMenuMusic() { if (music) { music.volume = effMusic(); music.play().catch(() => {}); } }
 function pauseMusic() { if (music) music.pause(); }
+
+// Remix-only background music: three tracks played in a fresh random order each run,
+// then looped. Shares the music volume/mute controls.
+const REMIX_TRACKS = [
+  "audio/bransboynd-retro-game-402454.mp3",
+  "audio/dopestuff-neon-gaming-128925.mp3",
+  "audio/music_unlimited-stranger-things-124008.mp3",
+];
+let remixMusic = null;
+let remixOrder = [];
+let remixTrack = 0;
+if (typeof Audio !== "undefined") {
+  remixMusic = new Audio();
+  remixMusic.addEventListener("ended", () => {
+    remixTrack = (remixTrack + 1) % remixOrder.length; // advance and loop the shuffled order
+    remixMusic.src = remixOrder[remixTrack];
+    remixMusic.volume = effMusic();
+    remixMusic.play().catch(() => {});
+  });
+}
+function startRemixMusic() {
+  if (!remixMusic) return;
+  remixOrder = REMIX_TRACKS.slice();
+  for (let i = remixOrder.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [remixOrder[i], remixOrder[j]] = [remixOrder[j], remixOrder[i]];
+  }
+  remixTrack = 0;
+  remixMusic.src = remixOrder[0];
+  remixMusic.volume = effMusic();
+  remixMusic.play().catch(() => {});
+}
+function resumeRemixMusic() { if (remixMusic && remixMusic.src) remixMusic.play().catch(() => {}); }
+function stopRemixMusic() { if (remixMusic) remixMusic.pause(); }
+function applyRemixMusicVol() { if (remixMusic) remixMusic.volume = effMusic(); }
+
 function effSfx() { return sfxMuted ? 0 : sfxVolume; }
+
+// One-shot menu click sound (the card-select SFX reused from Ranger Survivor),
+// gated by the SFX volume and mute. Cloned per play so quick clicks can overlap.
+const MENU_SFX_SRC = "audio/card_select.mp3";
+let menuSfx = null;
+if (typeof Audio !== "undefined") { menuSfx = new Audio(MENU_SFX_SRC); menuSfx.preload = "auto"; }
+function playMenuSfx() {
+  if (!menuSfx) return;
+  const lvl = effSfx();
+  if (lvl <= 0) return;
+  const s = menuSfx.cloneNode();
+  s.volume = Math.min(1, lvl);
+  s.play().catch(() => {});
+}
 
 function saveAudioPrefs() {
   try {
@@ -965,18 +1167,18 @@ function updateMuteIcons() {
 if (musicSlider) musicSlider.addEventListener("input", () => {
   musicVolume = Number(musicSlider.value) / 100;
   if (musicVolume > 0) musicMuted = false;
-  applyMusicVol(); updateMuteIcons(); saveAudioPrefs();
+  applyMusicVol(); applyRemixMusicVol(); updateMuteIcons(); saveAudioPrefs();
 });
 if (musicMuteBtn) musicMuteBtn.addEventListener("click", () => {
-  musicMuted = !musicMuted; applyMusicVol(); updateMuteIcons(); saveAudioPrefs();
+  musicMuted = !musicMuted; applyMusicVol(); applyRemixMusicVol(); updateMuteIcons(); saveAudioPrefs();
 });
 if (sfxSlider) sfxSlider.addEventListener("input", () => {
   sfxVolume = Number(sfxSlider.value) / 100;
   if (sfxVolume > 0) sfxMuted = false;
-  updateMuteIcons(); saveAudioPrefs();
+  updateMuteIcons(); saveAudioPrefs(); applyUfoVolume();
 });
 if (sfxMuteBtn) sfxMuteBtn.addEventListener("click", () => {
-  sfxMuted = !sfxMuted; updateMuteIcons(); saveAudioPrefs();
+  sfxMuted = !sfxMuted; updateMuteIcons(); saveAudioPrefs(); applyUfoVolume();
 });
 updateMuteIcons();
 
@@ -1062,6 +1264,34 @@ function thump(o) {
   osc.stop(t + o.dur + 0.02);
 }
 
+// A one-shot whirring tone (fast vibrato that decays): the boomerang spin.
+function whirl(o) {
+  const ctx = audioCtx;
+  if (!ctx) return;
+  const lvl = sfxLevel();
+  if (lvl <= 0) return;
+  const t = ctx.currentTime;
+  const dur = o.dur || 0.4;
+  const osc = ctx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(o.f0 || 500, t);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(40, o.f1 || 720), t + dur);
+  const lfo = ctx.createOscillator();
+  lfo.type = "sine";
+  lfo.frequency.value = o.rate || 30;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = o.depth || 240;
+  lfo.connect(lfoGain).connect(osc.frequency);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime((o.gain || 0.25) * lvl, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(ctx.destination);
+  osc.start(t);
+  lfo.start(t);
+  osc.stop(t + dur + 0.02);
+  lfo.stop(t + dur + 0.02);
+}
+
 // Four descending steps of the marching beat.
 const BEAT_FREQS = [233, 207, 185, 165];
 
@@ -1085,6 +1315,16 @@ function playSfx(name) {
       thump({ type: "square", f0: 260, f1: 60, dur: 0.24, gain: 0.42 });
       noiseBurst({ dur: 0.2, cutoff: 2200, gain: 0.3 });
       break;
+    case "bomb":
+      // A deep boom that rumbles for the full ~3s the blast takes to expand.
+      noiseBurst({ dur: 2.9, cutoff: 900, gain: 0.62 });
+      thump({ type: "triangle", f0: 130, f1: 18, dur: 2.7, gain: 0.72 });
+      blip({ type: "sawtooth", f0: 170, f1: 28, dur: 0.9, gain: 0.16 });
+      break;
+    case "boomerang":
+      // A sustained spinning whoosh that lasts while the boomerangs are in flight.
+      whirl({ f0: 460, f1: 700, dur: 1.2, rate: 30, depth: 240, gain: 0.26 });
+      break;
     case "beat1":
     case "beat2":
     case "beat3":
@@ -1099,8 +1339,6 @@ let ufoNodes = null;
 function startUfoSound() {
   const ctx = audioCtx;
   if (!ctx) return;
-  const lvl = sfxLevel();
-  if (lvl <= 0) return;
   stopUfoSound();
   const osc = ctx.createOscillator();
   osc.type = "sawtooth";
@@ -1111,17 +1349,25 @@ function startUfoSound() {
   const lfoGain = ctx.createGain();
   lfoGain.gain.value = 130;
   lfo.connect(lfoGain).connect(osc.frequency);
+  // Always create the node (even at gain 0 when muted) so the drone can be raised
+  // or lowered live as the SFX slider/mute changes while the saucer is on screen.
   const g = ctx.createGain();
-  g.gain.value = 0.15 * lvl;
+  g.gain.value = 0.15 * sfxLevel();
   osc.connect(g).connect(ctx.destination);
   osc.start();
   lfo.start();
-  ufoNodes = { osc, lfo };
+  ufoNodes = { osc, lfo, gain: g };
 }
 function stopUfoSound() {
   if (ufoNodes) {
     try { ufoNodes.osc.stop(); ufoNodes.lfo.stop(); } catch (_) {}
     ufoNodes = null;
+  }
+}
+// Track the live saucer drone to the SFX slider/mute while it is playing.
+function applyUfoVolume() {
+  if (ufoNodes && ufoNodes.gain && audioCtx) {
+    ufoNodes.gain.gain.setTargetAtTime(0.15 * sfxLevel(), audioCtx.currentTime, 0.01);
   }
 }
 
@@ -1154,28 +1400,877 @@ if (typeof window !== "undefined" && window.addEventListener) {
   window.addEventListener("blur", autoPauseOnLeave);
 }
 
-// Fit the canvas into the stage between the bars, keeping the 224:256 aspect.
+// The game viewport (canvas + menu overlay) is a fixed-size box scaled uniformly
+// to fit the stage between the full-width HUD bars. The bars stay edge-to-edge and
+// size themselves to the window; only this middle box is letterboxed, so the menu
+// spacing is identical at every screen size.
+// APP_W:APP_H must match the canvas aspect (224:256). Keep in sync with .play-area
+// width/height in styles.css.
+const APP_W = 700;
+const APP_H = 800;
 const stageEl = (typeof document.querySelector === "function") ? document.querySelector(".stage") : null;
-function fitCanvas() {
-  if (!stageEl || typeof getComputedStyle !== "function") return;
+const appEl = (typeof document.getElementById === "function") ? document.getElementById("app") : null;
+function fitApp() {
+  if (!stageEl || !appEl || typeof getComputedStyle !== "function") return;
   const cs = getComputedStyle(stageEl);
-  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
-  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-  const border = 4; // canvas border, 2px each side
-  const availW = stageEl.clientWidth - padX - border;
-  const availH = stageEl.clientHeight - padY - border;
+  const availW = stageEl.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = stageEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
   if (availW <= 0 || availH <= 0) return;
-  const ratio = WIDTH / HEIGHT;
-  // Prefer height (landscape); fall back to width when the stage is narrow.
-  let h = availH;
-  let w = h * ratio;
-  if (w > availW) { w = availW; h = w / ratio; }
-  canvas.style.width = Math.floor(w) + "px";
-  canvas.style.height = Math.floor(h) + "px";
+  appEl.style.transform = "scale(" + Math.min(availW / APP_W, availH / APP_H) + ")";
 }
 if (typeof window !== "undefined" && window.addEventListener) {
-  window.addEventListener("resize", fitCanvas);
-  window.addEventListener("orientationchange", fitCanvas);
-  window.addEventListener("load", fitCanvas);
+  window.addEventListener("resize", fitApp);
+  window.addEventListener("orientationchange", fitApp);
+  window.addEventListener("load", fitApp);
 }
-fitCanvas();
+fitApp();
+
+// ===================================================================================
+// Remix mode: a mouse-aimed gallery shooter sharing the canvas, HUD, overlay, audio,
+// and leaderboard with Classic. Two bottom turrets auto-fire at the crosshair while
+// the button is held. Big orbs split into four smalls when hit. Enemies never shoot;
+// the run ends the instant any orb reaches the bottom line.
+// ===================================================================================
+const RX_BOTTOM = HEIGHT - 18;          // lose line: an orb reaching it ends the run
+const RX_TURRET_Y = HEIGHT - 14;
+const RX_T1X = 28;
+const RX_T2X = WIDTH - 28 - spriteW("player");
+const RX_FIRE_INTERVAL = 0.08;          // hold-to-fire cadence
+const RX_HIT_PAD = 6;                    // aim forgiveness added to a target's radius
+const RX_MINI_R = 4;                     // the splits a boss drops
+const RX_UFO_R = 11;                     // bonus craft
+const RX_COL = 16;                       // fleet grid cell spacing (same as Classic)
+const RX_ROW = 14;
+const RX_STEP_DX = 3;                    // horizontal hop per fleet step
+const RX_DROP_DY = 8;                    // drop when a fleet reverses at a wall
+// Per orb type: hit radius (RX_HIT_PAD added for aim forgiveness), points, and the
+// particle colour. Rows run purple, blue, green, yellow, orange, red top to bottom.
+const RX_TYPE_R = { orbSmall: 5, orbMid: 6, orbLarge: 7, yellow: 8, orange: 9, red: 10, boss: 9 };
+const RX_POINTS = { orbSmall: 60, orbMid: 50, orbLarge: 40, yellow: 30, orange: 20, red: 10 };
+const RX_COLOR = {
+  orbSmall: COLORS.orbSmall, orbMid: COLORS.orbMid, orbLarge: COLORS.orbLarge,
+  yellow: "#f5ff36", orange: "#ff8a2b", red: "#ff3b3b",
+};
+
+// Two-frame orb shapes for the Remix rows; the legs shift between frames for a wiggle.
+const RX_TALL_0 = ["0001111111000","0011111111100","0111111111110","1111111111111","1111100011111","1111100011111","0111111111110","0011111111100","0110000000110"];
+const RX_TALL_1 = ["0001111111000","0011111111100","0111111111110","1111111111111","1111100011111","1111100011111","0111111111110","0011111111100","1010000000101"];
+const RX_BIG_0 = ["00000111111100000","00001111111110000","00011111111111000","00111111111111100","01111111111111110","11111110001111111","11111110001111111","01111111111111110","00111111111111100","01100000000000110"];
+const RX_BIG_1 = ["00000111111100000","00001111111110000","00011111111111000","00111111111111100","01111111111111110","11111110001111111","11111110001111111","01111111111111110","00111111111111100","10100000000000101"];
+const RX_WIDE_0 = ["00000111111100000","00001111111110000","00011111111111000","00111111111111100","01111111111111110","11111100000111111","11111111111111111","01111111111111110","00111111111111100","01100000000000110"];
+const RX_WIDE_1 = ["00000111111100000","00001111111110000","00011111111111000","00111111111111100","01111111111111110","11111100000111111","11111111111111111","01111111111111110","00111111111111100","10100000000000101"];
+const RX_BOSS_0 = ["0001111111000","0011111111100","0111111111110","1111111111111","1111000001111","1111111111111","1111111111111","0111111111110","0011111111100","0110000000110"];
+const RX_BOSS_1 = ["0001111111000","0011111111100","0111111111110","1111111111111","1111000001111","1111111111111","1111111111111","0111111111110","0011111111100","1010000000101"];
+
+const RX_BOSS_COLOR = "#ff3b3b"; // boss splits and area bursts
+const RX_RAINBOW = ["#ff3b3b", "#ff8a2b", "#f5ff36", "#4dff5a", "#36e0ff", "#5a7bff", "#d96fff"];
+
+// Sprite frames per row type (purple/blue reuse the classic sprites via spriteCache).
+const RX_GREEN = [bakeSprite(RX_TALL_0, RX_COLOR.orbLarge), bakeSprite(RX_TALL_1, RX_COLOR.orbLarge)];
+const RX_YEL = [bakeSprite(SPRITES.orbLarge[0], RX_COLOR.yellow), bakeSprite(SPRITES.orbLarge[1], RX_COLOR.yellow)];
+const RX_ORG = [bakeSprite(RX_BIG_0, RX_COLOR.orange), bakeSprite(RX_BIG_1, RX_COLOR.orange)];
+const RX_RED = [bakeSprite(RX_WIDE_0, RX_COLOR.red), bakeSprite(RX_WIDE_1, RX_COLOR.red)];
+const RX_BOSS_RAINBOW = RX_RAINBOW.map((col) => [bakeSprite(RX_BOSS_0, col), bakeSprite(RX_BOSS_1, col)]);
+const RX_MINI_RAINBOW = RX_RAINBOW.map((col) => bakeSprite(SPRITES.orbSmall[0], col));
+const RX_DRAWSCALE = { orbSmall: 1, orbMid: 1, orbLarge: 0.96, yellow: 1.17, orange: 0.94, red: 1.03, boss: 1.6 };
+
+const RX_UFO_IMG = spriteCache["ufo:0"];
+const RX_UFO_WHITE = bakeSprite(SPRITES.ufo[0], "#ffffff");
+// A black mask the size of the UFO with a pixel at each window. Drawn on top of the
+// saucer with the same transform, so the windows stay dark and aligned at any scale.
+const RX_UFO_WINDOWS = (() => {
+  const grid = SPRITES.ufo[0].map((row) => row.split("").fill("0"));
+  for (const h of UFO_HOLES) grid[h.y][h.x] = "1";
+  return bakeSprite(grid.map((row) => row.join("")), "#000");
+})();
+const RX_UFO_SPEED = 300;
+
+// Bomb/boomerang drops: 2% each per kill; they drift, bounce twice, then despawn.
+const RX_DROP_CHANCE = 0.02;
+const RX_DROP_SPEED = 70;
+const RX_DROP_R = 8;
+const RX_BLAST_MAX = 50;
+const RX_BLAST_GROW = 16.7;     // ~3s from a pixel to the cap
+const RX_BIG_BOOM_SPEED = 150;
+const RX_BIG_BOOM_R = 16;
+const RX_BOMB_BITS = ["000110000","001111100","011011110","110111111","111111111","111111111","011111110","001111100","000000000"];
+const RX_BOOM_BITS = ["100000001","110000011","011000110","001101100","000111000","000010000"];
+const RX_BOMB_RAINBOW = RX_RAINBOW.map((col) => bakeSprite(RX_BOMB_BITS, col));
+const RX_BOOM_RAINBOW = RX_RAINBOW.map((col) => bakeSprite(RX_BOOM_BITS, col));
+
+const rx = {
+  fleets: [],                // each is an independent classic-style stepping fleet
+  minis: [],                 // free-falling orbs dropped by a shot boss
+  shuttles: [],
+  particles: [],
+  floats: [],                // floating score popups (e.g. the UFO bonus)
+  drops: [],                 // bouncing bomb / boomerang pickups
+  blasts: [],                // expanding bomb kill-circles
+  boomerangs: [],            // big boomerangs fired when a boomerang drop is shot
+  forts: [],                 // carve-able bunkers along the bottom
+  crosshair: { x: WIDTH / 2, y: HEIGHT / 2 },
+  firing: false,
+  fireCooldown: 0,
+  elapsed: 0,                // seconds since the run started, drives the spawn ramp
+  spawnTimer: 0,
+  shuttleTimer: 0,
+  bossTimer: 0,
+  nextWaveId: 1,
+  spawnsSinceFull: 0,        // forces a full 6-row wave at least every 4 spawns
+  waveCount: 0,              // scheduled waves; the enemy floor rises every 5 of these
+  ufoSound: false,
+};
+
+function startRemix() {
+  rx.fleets = [];
+  rx.minis = [];
+  rx.shuttles = [];
+  rx.particles = [];
+  rx.floats = [];
+  rx.drops = [];
+  rx.blasts = [];
+  rx.boomerangs = [];
+  rx.firing = false;
+  rx.fireCooldown = 0;
+  rx.elapsed = 0;
+  rx.spawnTimer = 4 + Math.random() * 1.2; // first wave is solo for a few seconds
+  rx.shuttleTimer = 6;
+  rx.bossTimer = 5 + Math.random() * 6;
+  rx.nextWaveId = 1;
+  rx.spawnsSinceFull = 0;
+  rx.waveCount = 0;
+  rx.ufoSound = false;
+  rx.crosshair.x = WIDTH / 2;
+  rx.crosshair.y = HEIGHT / 2;
+  state.lives = 1; // instant game over when a wave reaches the bottom
+  rxBuildForts();
+  spawnWave();
+  canvas.style.cursor = "none";
+}
+
+const RX_ROW_ORDER = ["orbSmall", "orbMid", "orbLarge", "yellow", "orange", "red"]; // top -> bottom
+// Weighted partial-wave row count: 1=5% 2=10% 3=20% 4=25% 5=22% 6=18%.
+function rxRandomRowCount() {
+  const r = Math.random() * 100;
+  if (r < 5) return 1;
+  if (r < 15) return 2;
+  if (r < 35) return 3;
+  if (r < 60) return 4;
+  if (r < 82) return 5;
+  return 6;
+}
+function spawnWave() {
+  const id = rx.nextWaveId++;
+  const cs = 18, rs = 15;
+  const maxCols = Math.min(9, Math.floor((WIDTH - 8) / cs));
+  const colT = (Math.random() + Math.random() + Math.random()) / 3; // bell-curved, peaks mid-range
+  const cols = 5 + Math.round(colT * (maxCols - 5));
+
+  let rows, fy;
+  if (id <= 2) {
+    rows = RX_ROW_ORDER.slice(); // first two waves: full formation at the top
+    fy = 6 + Math.random() * 16;
+  } else {
+    // Contiguous row slice, forced full every 4th spawn, snapped to a top-half lane.
+    const rowCount = rx.spawnsSinceFull >= 3 ? 6 : rxRandomRowCount();
+    const start = Math.floor(Math.random() * (RX_ROW_ORDER.length - rowCount + 1));
+    rows = RX_ROW_ORDER.slice(start, start + rowCount);
+    const lanes = Math.floor((HEIGHT / 2) / rs);
+    const maxLane = Math.max(0, lanes - rows.length);
+    fy = Math.floor(Math.random() * (maxLane + 1)) * rs;
+  }
+  rx.spawnsSinceFull = rows.length === 6 ? 0 : rx.spawnsSinceFull + 1;
+
+  const gridW = cols * cs;
+  const cells = [];
+  for (let r = 0; r < rows.length; r++) {
+    for (let c = 0; c < cols; c++) cells.push({ col: c, row: r, type: rows[r], alive: true });
+  }
+  rx.fleets.push({
+    id,
+    fx: 4 + Math.random() * Math.max(1, WIDTH - gridW - 8),
+    fy,
+    dir: Math.random() < 0.5 ? -1 : 1,
+    stepAccum: 0,
+    frame: 0,
+    pendingDrop: false,
+    cells,
+    total: cells.length,
+    alive: cells.length,
+    cs,
+    rs,
+    baseInterval: 0.044 + Math.random() * 0.08,
+  });
+  state.wave = id;
+}
+
+// Spawn gap shrinks over the run, clamped to a 1.4s floor.
+function rxSpawnInterval() {
+  const base = Math.max(1.4, 4.2 - rx.elapsed * 0.045);
+  return base + Math.random() * 1.0;
+}
+
+// Live enemies on screen (fleet orbs still alive, plus free-falling boss splits).
+function rxEnemyCount() {
+  let n = rx.minis.length;
+  for (const f of rx.fleets) n += f.alive;
+  return n;
+}
+
+// Forts along the bottom. Reuses the Classic carve-able pixel bunker.
+function rxBuildForts() {
+  rx.forts = [];
+  const count = 4, bw = 24, bh = 14;
+  const y = RX_BOTTOM - 30;
+  const gap = (WIDTH - count * bw) / (count + 1);
+  for (let i = 0; i < count; i++) {
+    rx.forts.push(makeBunker(Math.round(gap + i * (bw + gap)), y, bw, bh));
+  }
+}
+
+// Bosses are their own object: a small 1x1, 1x2, or 2x2 cluster of boss orbs
+// that steps in like any fleet, separate from the regular waves.
+function spawnBoss() {
+  const shapes = [[1, 1], [1, 2], [2, 1], [2, 2]];
+  const [cols, rows] = shapes[Math.floor(Math.random() * shapes.length)];
+  const cs = 22, rs = 20;
+  const gridW = cols * cs;
+  const cells = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) cells.push({ col: c, row: r, type: "boss", alive: true });
+  }
+  rx.fleets.push({
+    id: rx.nextWaveId++,
+    fx: 6 + Math.random() * Math.max(1, WIDTH - gridW - 12),
+    fy: 6 + Math.random() * 14,
+    dir: Math.random() < 0.5 ? -1 : 1,
+    stepAccum: 0,
+    frame: 0,
+    pendingDrop: false,
+    cells,
+    total: cells.length,
+    alive: cells.length,
+    cs,
+    rs,
+    baseInterval: 0.07 + Math.random() * 0.1,
+  });
+}
+
+function rxCellPos(f, cell) {
+  const cs = f.cs || RX_COL, rs = f.rs || RX_ROW;
+  return { x: f.fx + cell.col * cs + cs / 2, y: f.fy + cell.row * rs + rs / 2 };
+}
+
+function rxFleetExtent(f) {
+  const cs = f.cs || RX_COL;
+  let min = Infinity, max = -Infinity;
+  for (const c of f.cells) {
+    if (!c.alive) continue;
+    const x = f.fx + c.col * cs;
+    if (x < min) min = x;
+    if (x + cs > max) max = x + cs;
+  }
+  return { min, max };
+}
+
+function rxFleetBottom(f) {
+  const rs = f.rs || RX_ROW;
+  let max = -Infinity;
+  for (const c of f.cells) {
+    if (!c.alive) continue;
+    const y = f.fy + c.row * rs + rs;
+    if (y > max) max = y;
+  }
+  return max;
+}
+
+// Steps speed up as the fleet thins. Clamp to [0,1]: a cleared fleet (alive 0) gives a
+// negative fraction that would make the interval <= 0 and hang the step loop.
+function rxStepInterval(f) {
+  const frac = f.total > 1 ? Math.max(0, Math.min(1, (f.alive - 1) / (f.total - 1))) : 0;
+  return f.baseInterval * (0.2 + 0.8 * frac);
+}
+
+// One fleet step. Returns true if it ended the run (reached the bottom).
+function rxStepFleet(f) {
+  f.frame ^= 1;
+  if (f.pendingDrop) {
+    f.fy += RX_DROP_DY;
+    f.dir *= -1;
+    f.pendingDrop = false;
+    if (rxFleetBottom(f) >= RX_BOTTOM) { playSfx("explosion"); gameOver(); return true; }
+    return false;
+  }
+  f.fx += RX_STEP_DX * f.dir;
+  const ext = rxFleetExtent(f);
+  if (f.dir > 0 && ext.max >= WIDTH - 4) f.pendingDrop = true;
+  else if (f.dir < 0 && ext.min <= 4) f.pendingDrop = true;
+  return false;
+}
+
+function spawnShuttle() {
+  rx.shuttles.push({
+    x: Math.random() < 0.5 ? -16 : WIDTH + 16,
+    y: 16 + Math.random() * 70,
+    tx: 24 + Math.random() * (WIDTH - 48), // random spot to dart to
+    ty: 18 + Math.random() * 90,
+    st: "in",
+    timer: 0,
+    flash: 0,
+    age: 0,
+  });
+}
+
+function rxBurst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 40 + Math.random() * 150;
+    rx.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0.5 + Math.random() * 0.7,
+      max: 1.2,
+      size: Math.random() < 0.35 ? 2 : 1,
+      color,
+    });
+  }
+}
+
+function rxDist2(ax, ay, bx, by) {
+  const dx = ax - bx, dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+// Move o toward (tx, ty) by step px. Returns true once it arrives.
+function rxMoveToward(o, tx, ty, step) {
+  const dx = tx - o.x, dy = ty - o.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= step || dist === 0) { o.x = tx; o.y = ty; return true; }
+  o.x += (dx / dist) * step;
+  o.y += (dy / dist) * step;
+  return false;
+}
+
+function rxDrawSpin(img, cx, cy, scale, angle) {
+  const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  ctx.drawImage(img, Math.round(-w / 2), Math.round(-h / 2), w, h);
+  ctx.restore();
+}
+
+function rxSpawnDrop(kind, x, y) {
+  const a = Math.random() * Math.PI * 2;
+  rx.drops.push({ kind, x, y, vx: Math.cos(a) * RX_DROP_SPEED, vy: Math.sin(a) * RX_DROP_SPEED, bounces: 0, spin: 0 });
+}
+
+// 2% each per enemy kill, rolled independently.
+function rxRollDrops(x, y) {
+  if (Math.random() < RX_DROP_CHANCE) rxSpawnDrop("bomb", x, y);
+  if (Math.random() < RX_DROP_CHANCE) rxSpawnDrop("boomerang", x, y);
+}
+
+function rxTriggerBomb(x, y) {
+  rx.blasts.push({ x, y, r: 0 });
+  playSfx("bomb");
+}
+
+function rxTriggerBoomerang(x, y) {
+  for (let i = 0; i < 3; i++) {
+    const a = Math.random() * Math.PI * 2;
+    rx.boomerangs.push({ x, y, vx: Math.cos(a) * RX_BIG_BOOM_SPEED, vy: Math.sin(a) * RX_BIG_BOOM_SPEED, spin: Math.random() * 6, bounces: 0 });
+  }
+  playSfx("boomerang");
+}
+
+// Destroy every enemy whose centre is within radius of (cx, cy). Silent: the bomb and
+// boomerang play their own sound while they're active.
+function rxDamageArea(cx, cy, radius) {
+  const r2 = radius * radius;
+  let killed = 0;
+  for (const f of rx.fleets) {
+    for (const c of f.cells) {
+      if (!c.alive) continue;
+      const p = rxCellPos(f, c);
+      if (rxDist2(cx, cy, p.x, p.y) <= r2) {
+        c.alive = false;
+        f.alive--;
+        addScore(c.type === "boss" ? 15 : (RX_POINTS[c.type] || 10));
+        rxBurst(p.x, p.y, c.type === "boss" ? RX_BOSS_COLOR : (RX_COLOR[c.type] || "#ffffff"), 12);
+        killed++;
+      }
+    }
+  }
+  for (const m of rx.minis) {
+    if (m.dead) continue;
+    if (rxDist2(cx, cy, m.x, m.y) <= r2) {
+      m.dead = true; killed++;
+      addScore(10);
+      rxBurst(m.x, m.y, RX_BOSS_COLOR, 8);
+    }
+  }
+  if (killed) rx.minis = rx.minis.filter((mm) => !mm.dead);
+}
+
+function rxFireTick() {
+  const cx = rx.crosshair.x, cy = rx.crosshair.y;
+
+  // Bomb / boomerang pickups take priority when the crosshair is on one.
+  let drop = null, dropBest = Infinity;
+  for (const d of rx.drops) {
+    if (d.dead) continue;
+    const rr = RX_DROP_R + RX_HIT_PAD;
+    const dd = rxDist2(cx, cy, d.x, d.y);
+    if (dd <= rr * rr && dd < dropBest) { dropBest = dd; drop = d; }
+  }
+  if (drop) {
+    drop.dead = true;
+    if (drop.kind === "bomb") rxTriggerBomb(drop.x, drop.y);
+    else rxTriggerBoomerang(drop.x, drop.y);
+    rx.drops = rx.drops.filter((d) => !d.dead);
+    return;
+  }
+
+  let ufo = null, best = Infinity;
+  for (const s of rx.shuttles) {
+    if (s.dead) continue;
+    const rr = RX_UFO_R + RX_HIT_PAD;
+    const d = rxDist2(cx, cy, s.x, s.y);
+    if (d <= rr * rr && d < best) { best = d; ufo = s; }
+  }
+  if (ufo) {
+    ufo.dead = true;
+    // Faster kill, more points (by how long the saucer has been up).
+    let pts = 1000;
+    if (ufo.age < 1) pts = 2500;
+    else if (ufo.age < 2) pts = 2000;
+    else if (ufo.age < 3) pts = 1500;
+    addScore(pts);
+    rxBurst(ufo.x, ufo.y, COLORS.ufo, 40);
+    rx.floats.push({ x: ufo.x, y: ufo.y - 10, text: String(pts), t: 1.5 });
+    playSfx("ufoKilled");
+    rx.shuttles = rx.shuttles.filter((s) => !s.dead);
+    return;
+  }
+
+  // Otherwise kill every enemy overlapping the crosshair this tick (stacks pop together).
+  let killedAny = false;
+
+  // Minis first, so a boss split created below this tick isn't instantly destroyed.
+  for (const m of rx.minis) {
+    if (m.dead) continue;
+    const rr = RX_MINI_R + RX_HIT_PAD;
+    if (rxDist2(cx, cy, m.x, m.y) <= rr * rr) {
+      m.dead = true;
+      addScore(10);
+      rxBurst(m.x, m.y, RX_BOSS_COLOR, 18);
+      rxRollDrops(m.x, m.y);
+      killedAny = true;
+    }
+  }
+
+  for (const f of rx.fleets) {
+    for (const c of f.cells) {
+      if (!c.alive) continue;
+      const p = rxCellPos(f, c);
+      const rr = RX_TYPE_R[c.type] + RX_HIT_PAD;
+      if (rxDist2(cx, cy, p.x, p.y) > rr * rr) continue;
+      c.alive = false;
+      f.alive--;
+      if (c.type === "boss") {
+        addScore(15);
+        rxBurst(p.x, p.y, RX_BOSS_COLOR, 34);
+        const spread = [[-1, -0.4], [1, -0.4], [-1, 0.6], [1, 0.6]];
+        for (const [sx, sy] of spread) {
+          rx.minis.push({ x: p.x, y: p.y, vx: sx * 30, vy: 16 + Math.random() * 14 + sy * 8, r: RX_MINI_R });
+        }
+      } else {
+        addScore(RX_POINTS[c.type] || 10);
+        rxBurst(p.x, p.y, RX_COLOR[c.type] || "#ffffff", 18);
+      }
+      rxRollDrops(p.x, p.y);
+      killedAny = true;
+    }
+  }
+
+  if (killedAny) {
+    rx.minis = rx.minis.filter((m) => !m.dead);
+    playSfx("shoot");
+  }
+}
+
+function remixUpdate(dt) {
+  if (state.mode !== "playing") {
+    if (rx.ufoSound) { stopUfoSound(); rx.ufoSound = false; }
+    return; // frozen while paused or on the overlay
+  }
+
+  rx.elapsed += dt;
+  const waveBefore = state.wave;
+
+  rx.spawnTimer -= dt;
+  if (rx.spawnTimer <= 0) { spawnWave(); rx.waveCount++; rx.spawnTimer = rxSpawnInterval(); }
+
+  // After the intro waves keep the screen busy. The floor starts at 25 and rises by
+  // 5 every 5 scheduled waves.
+  if (rx.nextWaveId > 2) {
+    const minEnemies = 25 + 5 * Math.floor(rx.waveCount / 5);
+    let guard = 0;
+    while (rxEnemyCount() <= minEnemies && guard < 30) { spawnWave(); guard++; }
+  }
+  if (state.wave !== waveBefore) updateHud(); // one HUD update per frame, not per spawn
+
+  rx.bossTimer -= dt;
+  if (rx.bossTimer <= 0) { spawnBoss(); rx.bossTimer = 6 + Math.random() * 8; }
+
+  rx.shuttleTimer -= dt;
+  if (rx.shuttleTimer <= 0) { spawnShuttle(); rx.shuttleTimer = 8 + Math.random() * 7; }
+  for (const s of rx.shuttles) {
+    s.flash += dt;
+    s.age += dt;
+    if (s.st === "in") {
+      if (rxMoveToward(s, s.tx, s.ty, RX_UFO_SPEED * dt)) { s.st = "sit"; s.timer = 1 + Math.random() * 3; }
+    } else if (s.st === "sit") {
+      s.timer -= dt;
+      if (s.timer <= 0) {
+        s.st = "out";
+        s.tx = Math.random() < 0.5 ? -40 : WIDTH + 40; // zoom off a random side
+        s.ty = s.y + (Math.random() * 80 - 40);
+      }
+    } else {
+      rxMoveToward(s, s.tx, s.ty, RX_UFO_SPEED * dt);
+      if (s.x < -24 || s.x > WIDTH + 24 || s.y < -24 || s.y > HEIGHT + 24) s.dead = true;
+    }
+  }
+  rx.shuttles = rx.shuttles.filter((s) => !s.dead);
+
+  // Drone the classic UFO sound while a bonus craft is on screen.
+  const anyUfo = rx.shuttles.length > 0;
+  if (anyUfo && !rx.ufoSound) { startUfoSound(); rx.ufoSound = true; }
+  else if (!anyUfo && rx.ufoSound) { stopUfoSound(); rx.ufoSound = false; }
+
+  // Each fleet steps on its own clock, accelerating as it thins (classic mechanic).
+  for (const f of rx.fleets) {
+    if (f.alive <= 0) continue;
+    f.stepAccum += dt;
+    const interval = rxStepInterval(f);
+    while (f.stepAccum >= interval) {
+      f.stepAccum -= interval;
+      if (rxStepFleet(f)) return; // reached the bottom: run over
+    }
+  }
+  rx.fleets = rx.fleets.filter((f) => f.alive > 0);
+
+  // Free-falling boss splits.
+  for (const m of rx.minis) {
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+    m.vy += 10 * dt;
+    if (m.x < m.r) { m.x = m.r; m.vx = Math.abs(m.vx); }
+    if (m.x > WIDTH - m.r) { m.x = WIDTH - m.r; m.vx = -Math.abs(m.vx); }
+    if (m.y + m.r >= RX_BOTTOM) { playSfx("explosion"); gameOver(); return; }
+  }
+
+  // Enemies crashing into a fort die (pixels fly) and gouge a chunk out of it.
+  if (rx.forts.length) {
+    for (const f of rx.fleets) {
+      for (const c of f.cells) {
+        if (!c.alive) continue;
+        const p = rxCellPos(f, c);
+        const carve = RX_TYPE_R[c.type] || 6;
+        for (const fort of rx.forts) {
+          if (damageBunker(fort, p.x, p.y, carve)) {
+            c.alive = false;
+            f.alive--;
+            rxBurst(p.x, p.y, c.type === "boss" ? RX_BOSS_COLOR : (RX_COLOR[c.type] || "#ffffff"), 16);
+            break;
+          }
+        }
+      }
+    }
+    let any = false;
+    for (const m of rx.minis) {
+      if (m.dead) continue;
+      for (const fort of rx.forts) {
+        if (damageBunker(fort, m.x, m.y, 5)) {
+          m.dead = true;
+          any = true;
+          rxBurst(m.x, m.y, RX_BOSS_COLOR, 10);
+          break;
+        }
+      }
+    }
+    if (any) rx.minis = rx.minis.filter((m) => !m.dead);
+  }
+
+  // Bouncing pickups: bounce off two walls, despawn on the third.
+  for (const d of rx.drops) {
+    d.x += d.vx * dt;
+    d.y += d.vy * dt;
+    d.spin += dt * 5;
+    // Comet stream: scattered rainbow pixels left behind the object.
+    rx.particles.push({
+      x: d.x + (Math.random() * 6 - 3),
+      y: d.y + (Math.random() * 6 - 3),
+      vx: -d.vx * 0.12 + (Math.random() * 24 - 12),
+      vy: -d.vy * 0.12 + (Math.random() * 24 - 12),
+      life: 0.35 + Math.random() * 0.35,
+      max: 0.7,
+      size: Math.random() < 0.4 ? 3 : 2,
+      color: RX_RAINBOW[Math.floor(Math.random() * RX_RAINBOW.length)],
+    });
+    let wall = false;
+    if (d.x < RX_DROP_R) { d.x = RX_DROP_R; d.vx = Math.abs(d.vx); wall = true; }
+    else if (d.x > WIDTH - RX_DROP_R) { d.x = WIDTH - RX_DROP_R; d.vx = -Math.abs(d.vx); wall = true; }
+    if (d.y < RX_DROP_R) { d.y = RX_DROP_R; d.vy = Math.abs(d.vy); wall = true; }
+    else if (d.y > HEIGHT - RX_DROP_R) { d.y = HEIGHT - RX_DROP_R; d.vy = -Math.abs(d.vy); wall = true; }
+    if (wall) { d.bounces++; if (d.bounces >= 3) d.dead = true; } // bounce off 2 edges, despawn on the 3rd
+  }
+  rx.drops = rx.drops.filter((d) => !d.dead);
+
+  // Bomb blasts: a slowly expanding kill-circle.
+  for (const bl of rx.blasts) {
+    bl.r += RX_BLAST_GROW * dt;
+    rxDamageArea(bl.x, bl.y, bl.r);
+    if (bl.r >= RX_BLAST_MAX) bl.dead = true;
+  }
+  rx.blasts = rx.blasts.filter((bl) => !bl.dead);
+
+  // Big boomerangs: fly straight, killing enemies, until off screen.
+  for (const b of rx.boomerangs) {
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    b.spin += dt * 12;
+    rxDamageArea(b.x, b.y, RX_BIG_BOOM_R);
+    let wall = false;
+    if (b.x < RX_BIG_BOOM_R) { b.x = RX_BIG_BOOM_R; b.vx = Math.abs(b.vx); wall = true; }
+    else if (b.x > WIDTH - RX_BIG_BOOM_R) { b.x = WIDTH - RX_BIG_BOOM_R; b.vx = -Math.abs(b.vx); wall = true; }
+    if (b.y < RX_BIG_BOOM_R) { b.y = RX_BIG_BOOM_R; b.vy = Math.abs(b.vy); wall = true; }
+    else if (b.y > HEIGHT - RX_BIG_BOOM_R) { b.y = HEIGHT - RX_BIG_BOOM_R; b.vy = -Math.abs(b.vy); wall = true; }
+    if (wall) { b.bounces++; if (b.bounces >= 2) b.dead = true; }
+  }
+  rx.boomerangs = rx.boomerangs.filter((b) => !b.dead);
+
+  if (rx.firing) {
+    rx.fireCooldown -= dt;
+    if (rx.fireCooldown <= 0) { rx.fireCooldown = RX_FIRE_INTERVAL; rxFireTick(); }
+  } else {
+    rx.fireCooldown = 0; // ready to fire on the next press
+  }
+
+  for (const p of rx.particles) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 30 * dt;
+    p.life -= dt;
+  }
+  rx.particles = rx.particles.filter((p) => p.life > 0);
+
+  for (const fl of rx.floats) fl.t -= dt;
+  rx.floats = rx.floats.filter((fl) => fl.t > 0);
+}
+
+function rxBeam(mx, my, alpha, width) {
+  ctx.strokeStyle = COLORS.player;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(mx, my);
+  ctx.lineTo(rx.crosshair.x, rx.crosshair.y);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+}
+
+function rxDrawImg(img, cx, cy, scale) {
+  const w = img.width * scale, h = img.height * scale;
+  ctx.drawImage(img, Math.round(cx - w / 2), Math.round(cy - h / 2), Math.round(w), Math.round(h));
+}
+
+// The eye/visor gap (col,row,w,h in sprite pixels) for each orb type, so it can be
+// kept crisp and dark on top of the glow.
+const RX_EYE = {
+  orbSmall: { x: 3, y: 3, w: 2, h: 2 },
+  orbMid: { x: 4, y: 4, w: 3, h: 1 },
+  orbLarge: { x: 5, y: 4, w: 3, h: 2 },
+  yellow: { x: 4, y: 4, w: 4, h: 1 },
+  orange: { x: 7, y: 5, w: 3, h: 2 },
+  red: { x: 6, y: 5, w: 5, h: 1 },
+  boss: { x: 4, y: 4, w: 5, h: 1 },
+};
+
+// Glow the body, redraw it sharp, then punch the eye/visor dark so it stays prominent.
+function rxDrawOrb(img, glow, type, cx, cy, scale) {
+  ctx.shadowColor = glow;
+  ctx.shadowBlur = 6;
+  rxDrawImg(img, cx, cy, scale);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+  rxDrawImg(img, cx, cy, scale);
+  const e = RX_EYE[type];
+  if (e) {
+    const ox = Math.round(cx - (img.width * scale) / 2);
+    const oy = Math.round(cy - (img.height * scale) / 2);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(ox + Math.round(e.x * scale), oy + Math.round(e.y * scale),
+      Math.ceil(e.w * scale), Math.ceil(e.h * scale));
+  }
+}
+
+function remixRender() {
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  drawStars();
+  if (state.mode === "menu") return; // stars-only behind the menu overlay
+  canvas.style.cursor = state.mode === "playing" ? "none" : "default";
+  const rainbowIdx = Math.floor(performance.now() / 80) % RX_RAINBOW.length;
+
+  ctx.fillStyle = COLORS.player;
+  ctx.fillRect(0, RX_BOTTOM, WIDTH, 1);
+
+  // Forts, with a green glow.
+  ctx.shadowColor = COLORS.player;
+  ctx.shadowBlur = 6;
+  for (const fort of rx.forts) ctx.drawImage(fort.canvas, fort.x, fort.y);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+
+  // Enemies get a colour-matched body glow, with the eye/visor kept crisp on top.
+  for (const f of rx.fleets) {
+    for (const c of f.cells) {
+      if (!c.alive) continue;
+      const p = rxCellPos(f, c);
+      let img, glow;
+      if (c.type === "boss") {
+        img = RX_BOSS_RAINBOW[rainbowIdx][f.frame];
+        glow = RX_RAINBOW[rainbowIdx];
+      } else if (c.type === "orbLarge") { img = RX_GREEN[f.frame]; glow = RX_COLOR.orbLarge; }
+      else if (c.type === "yellow") { img = RX_YEL[f.frame]; glow = RX_COLOR.yellow; }
+      else if (c.type === "orange") { img = RX_ORG[f.frame]; glow = RX_COLOR.orange; }
+      else if (c.type === "red") { img = RX_RED[f.frame]; glow = RX_COLOR.red; }
+      else { img = spriteCache[c.type + ":" + f.frame]; glow = RX_COLOR[c.type]; }
+      rxDrawOrb(img, glow, c.type, p.x, p.y, RX_DRAWSCALE[c.type] || 1);
+    }
+  }
+  for (const m of rx.minis) {
+    rxDrawOrb(RX_MINI_RAINBOW[rainbowIdx], RX_RAINBOW[rainbowIdx], "orbSmall", m.x, m.y, 1.2);
+  }
+  // The UFO glows white, then a matching black mask keeps the windows dark on top.
+  ctx.shadowColor = "#ffffff";
+  ctx.shadowBlur = 6;
+  for (const s of rx.shuttles) {
+    const img = Math.floor(s.flash / 0.1) % 2 === 0 ? RX_UFO_IMG : RX_UFO_WHITE;
+    rxDrawImg(img, s.x, s.y, 1.2);
+  }
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+  for (const s of rx.shuttles) rxDrawImg(RX_UFO_WINDOWS, s.x, s.y, 1.2);
+
+  // Bomb blasts: an expanding ring that flashes through neon rainbow colours.
+  for (const bl of rx.blasts) {
+    const a = Math.max(0, 1 - bl.r / RX_BLAST_MAX);
+    const hue = Math.floor((performance.now() * 0.6 + bl.r * 6) % 360);
+    const col = "hsl(" + hue + ", 100%, 58%)";
+    ctx.strokeStyle = col;
+    ctx.globalAlpha = 0.5 + 0.4 * a;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(bl.x, bl.y, bl.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(bl.x, bl.y, bl.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1;
+
+  // Pickups and big boomerangs, with a glow. Both flash rainbow. (The comet stream
+  // behind a pickup is emitted into the particles above.)
+  ctx.shadowBlur = 6;
+  const bcol = RX_RAINBOW[rainbowIdx];
+  const bimg = RX_BOOM_RAINBOW[rainbowIdx];
+  for (const d of rx.drops) {
+    if (d.kind === "bomb") { ctx.shadowColor = bcol; rxDrawImg(RX_BOMB_RAINBOW[rainbowIdx], d.x, d.y, 1.95); }
+    else { ctx.shadowColor = bcol; rxDrawSpin(bimg, d.x, d.y, 1.95, d.spin); }
+  }
+  ctx.shadowColor = bcol;
+  for (const b of rx.boomerangs) rxDrawSpin(bimg, b.x, b.y, 3.4, b.spin);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+
+  for (const p of rx.particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = p.color;
+    const ps = p.size || 1;
+    ctx.fillRect(Math.round(p.x), Math.round(p.y), ps, ps);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.shadowColor = COLORS.player;
+  ctx.shadowBlur = 6;
+  drawSprite("player", 0, RX_T1X, RX_TURRET_Y);
+  drawSprite("player", 0, RX_T2X, RX_TURRET_Y);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+
+  const pw = spriteW("player");
+  const m1x = RX_T1X + pw / 2, m2x = RX_T2X + pw / 2, my = RX_TURRET_Y;
+  rxBeam(m1x, my, 0.22, 1);
+  rxBeam(m2x, my, 0.22, 1);
+  if (rx.firing && state.mode === "playing") {
+    // Flash the firing beams on and off while the button is held.
+    const flash = Math.floor(performance.now() / 60) % 2 === 0 ? 0.95 : 0.3;
+    rxBeam(m1x, my, flash, 1.5);
+    rxBeam(m2x, my, flash, 1.5);
+  }
+
+  const cx = rx.crosshair.x, cy = rx.crosshair.y;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.moveTo(cx - 7, cy); ctx.lineTo(cx - 2, cy);
+  ctx.moveTo(cx + 2, cy); ctx.lineTo(cx + 7, cy);
+  ctx.moveTo(cx, cy - 7); ctx.lineTo(cx, cy - 2);
+  ctx.moveTo(cx, cy + 2); ctx.lineTo(cx, cy + 7);
+  ctx.stroke();
+
+  // Score popups (the UFO bonus): large red text fixed where it was killed.
+  if (rx.floats.length) {
+    const fcol = Math.floor(performance.now() / 100) % 2 === 0 ? "#ff4d4d" : "#ffffff";
+    ctx.fillStyle = fcol;
+    ctx.font = "bold 16px monospace";
+    ctx.textAlign = "center";
+    ctx.shadowColor = fcol;
+    ctx.shadowBlur = 4;
+    for (const fl of rx.floats) ctx.fillText(fl.text, Math.round(fl.x), Math.round(fl.y));
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = "transparent";
+    ctx.textAlign = "left";
+  }
+
+  if (state.mode === "paused") {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.textAlign = "center";
+    ctx.fillStyle = COLORS.player;
+    ctx.font = "16px monospace";
+    ctx.fillText("PAUSED", WIDTH / 2, HEIGHT / 2 - 4);
+    ctx.fillStyle = "#e6e6e6";
+    ctx.font = "8px monospace";
+    ctx.fillText("Press ESC to resume", WIDTH / 2, HEIGHT / 2 + 12);
+    ctx.textAlign = "left";
+  }
+}
+
+// Mouse aiming and hold-to-fire. Harmless in Classic (the crosshair just tracks).
+function rxMouse(e) {
+  const r = canvas.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  rx.crosshair.x = Math.max(0, Math.min(WIDTH, (e.clientX - r.left) / r.width * WIDTH));
+  rx.crosshair.y = Math.max(0, Math.min(HEIGHT, (e.clientY - r.top) / r.height * HEIGHT));
+}
+canvas.addEventListener("mousemove", rxMouse);
+canvas.addEventListener("mousedown", (e) => { if (e.button === 0) { rx.firing = true; rxMouse(e); } });
+window.addEventListener("mouseup", (e) => { if (e.button === 0) rx.firing = false; });
+canvas.addEventListener("contextmenu", (e) => { if (gameMode === "remix") e.preventDefault(); });

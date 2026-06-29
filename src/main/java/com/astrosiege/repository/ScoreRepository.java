@@ -8,6 +8,6 @@ import java.util.List;
 
 public interface ScoreRepository extends JpaRepository<Score, Long> {
 
-    // Highest points first; ties broken by the shorter run, matching the leaderboard query.
-    List<Score> findAllByOrderByPointsDescDurationSecondsAsc(Pageable pageable);
+    // One board per mode. Highest points first; ties broken by the shorter run.
+    List<Score> findAllByModeOrderByPointsDescDurationSecondsAsc(String mode, Pageable pageable);
 }

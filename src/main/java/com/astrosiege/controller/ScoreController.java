@@ -6,6 +6,7 @@ import com.astrosiege.model.Score;
 import com.astrosiege.repository.ScoreRepository;
 import com.astrosiege.service.GameSessionService;
 import com.astrosiege.service.ProfanityFilter;
+import com.astrosiege.service.RemixScoreModel;
 import com.astrosiege.service.ScoreModel;
 import com.astrosiege.service.SubmissionRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
@@ -66,7 +67,11 @@ public class ScoreController {
         if (submission.durationSeconds() > elapsedSeconds + CLOCK_SKEW_SECONDS) {
             return rejected();
         }
-        if (submission.points() > ScoreModel.maxPoints(submission.durationSeconds()) + POINTS_SLACK) {
+        String mode = normalizeMode(submission.mode());
+        long maxPoints = "remix".equals(mode)
+                ? RemixScoreModel.maxPoints(submission.durationSeconds())
+                : ScoreModel.maxPoints(submission.durationSeconds());
+        if (submission.points() > maxPoints + POINTS_SLACK) {
             return rejected();
         }
         // Checked before consuming the session so a profane name can be fixed and resubmitted.
@@ -78,9 +83,15 @@ public class ScoreController {
             return rejected(); // already submitted, or swept between the checks
         }
         Score score = new Score(submission.name(), submission.points(),
-                submission.wave(), submission.durationSeconds());
+                submission.wave(), submission.durationSeconds(), mode);
         Score saved = scoreRepository.save(score);
         return ResponseEntity.ok(ScoreView.from(saved));
+    }
+
+    // Anything that isn't "remix" lands on the classic board, so an unknown or missing
+    // mode is a safe default rather than a rejection.
+    private static String normalizeMode(String mode) {
+        return "remix".equalsIgnoreCase(mode == null ? "" : mode.trim()) ? "remix" : "classic";
     }
 
     private ResponseEntity<?> rejected() {
@@ -88,9 +99,11 @@ public class ScoreController {
     }
 
     @GetMapping("/top")
-    public List<ScoreView> top(@RequestParam(defaultValue = "10") int limit) {
+    public List<ScoreView> top(@RequestParam(defaultValue = "10") int limit,
+                               @RequestParam(defaultValue = "classic") String mode) {
         int capped = Math.min(Math.max(limit, 1), 100);
-        return scoreRepository.findAllByOrderByPointsDescDurationSecondsAsc(PageRequest.of(0, capped))
+        return scoreRepository
+                .findAllByModeOrderByPointsDescDurationSecondsAsc(normalizeMode(mode), PageRequest.of(0, capped))
                 .stream()
                 .map(ScoreView::from)
                 .toList();

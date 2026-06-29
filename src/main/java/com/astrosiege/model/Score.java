@@ -32,16 +32,23 @@ public class Score {
     @Min(0)
     private int durationSeconds;
 
+    // Which game the run belongs to: "classic" or "remix". Each has its own board.
+    @NotBlank
+    @Size(max = 16)
+    @Column(length = 16, nullable = false)
+    private String mode;
+
     private Instant submittedAt;
 
     public Score() {
     }
 
-    public Score(String name, int points, int wave, int durationSeconds) {
+    public Score(String name, int points, int wave, int durationSeconds, String mode) {
         this.name = name;
         this.points = points;
         this.wave = wave;
         this.durationSeconds = durationSeconds;
+        this.mode = mode;
         this.submittedAt = Instant.now();
     }
 
@@ -63,6 +70,10 @@ public class Score {
 
     public int getDurationSeconds() {
         return durationSeconds;
+    }
+
+    public String getMode() {
+        return mode;
     }
 
     public Instant getSubmittedAt() {

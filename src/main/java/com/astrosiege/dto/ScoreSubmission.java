@@ -10,12 +10,15 @@ import jakarta.validation.constraints.Size;
  * verifies the run against its server-timed session and the score model. sessionId
  * is the id from POST /api/game/start; it's validated in the controller, not here,
  * so a missing one yields a clean "Score rejected" rather than a bean-validation 400.
+ * mode is "classic" or "remix"; the controller normalizes anything else to classic
+ * and uses it to pick the score model and the leaderboard the run lands on.
  */
 public record ScoreSubmission(
         @NotBlank @Size(max = 24) String name,
         @Min(0) @Max(10_000_000) int points,
         @Min(1) @Max(1000) int wave,
         @Min(0) @Max(86_400) int durationSeconds,
-        String sessionId
+        String sessionId,
+        String mode
 ) {
 }
