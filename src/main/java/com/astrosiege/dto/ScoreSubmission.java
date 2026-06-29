@@ -15,8 +15,8 @@ import jakarta.validation.constraints.Size;
  */
 public record ScoreSubmission(
         @NotBlank @Size(max = 24) String name,
-        @Min(0) @Max(10_000_000) int points,
-        @Min(1) @Max(1000) int wave,
+        @Min(0) @Max(1_000_000_000) int points,
+        @Min(1) @Max(10_000_000) int wave,
         @Min(0) @Max(86_400) int durationSeconds,
         String sessionId,
         String mode

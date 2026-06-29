@@ -466,6 +466,7 @@ function update(dt) {
       state.mode = "playing";
       state.invul = 1.5;
       state.player.x = centerPlayerX();
+      if (state.ufo) startUfoSound(); // the saucer kept crossing; bring its drone back
     }
     return;
   }
@@ -1045,7 +1046,7 @@ async function submitScore() {
       }),
     });
     if (res.status === 400) {
-      let msg = "Name not allowed.";
+      let msg = "Score rejected.";
       try { const body = await res.json(); if (body && body.message) msg = body.message; } catch (_) {}
       submitScoreButton.disabled = false;
       submitScoreButton.textContent = msg;
