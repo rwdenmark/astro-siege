@@ -1486,7 +1486,8 @@ const RX_UFO_WINDOWS = (() => {
 })();
 const RX_UFO_SPEED = 300;
 
-// Bomb/boomerang drops: 2% each per kill; they drift, bounce twice, then despawn.
+// Base bomb/boomerang drop chance: 2% each per kill, thinning by wave tier down to 0.1%
+// (see rxDropChance). Drops drift, bounce twice, then despawn.
 const RX_DROP_CHANCE = 0.02;
 const RX_DROP_SPEED = 70;
 const RX_DROP_R = 8;
@@ -1560,6 +1561,31 @@ function rxRandomRowCount() {
   if (r < 82) return 5;
   return 6;
 }
+
+// Difficulty scales through shared wave breakpoints: the ramp starts around wave 250 and
+// tops out near wave 5000, where the game is meant to be near unplayable. rxDiffTier maps
+// a wave to 0..8; each mechanic indexes its own factor table at that tier.
+const RX_DIFF_BREAKS = [250, 750, 1500, 2250, 3000, 3750, 4500, 5000];
+function rxDiffTier(wave) {
+  let tier = 0;
+  for (const b of RX_DIFF_BREAKS) if (wave >= b) tier++;
+  return tier;
+}
+// Boss spawn-gap multiplier (lower = bosses sooner), applied to the 6-14s base.
+const RX_BOSS_FACTORS = [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.35, 0.3];
+function rxBossInterval(wave) {
+  return (6 + Math.random() * 8) * RX_BOSS_FACTORS[rxDiffTier(wave)];
+}
+// Drop-chance multiplier on the 2% base, tapering to 0.1% by wave 5000.
+const RX_DROP_FACTORS = [1, 0.75, 0.5, 0.375, 0.25, 0.1875, 0.125, 0.0875, 0.05];
+function rxDropChance(wave) {
+  return RX_DROP_CHANCE * RX_DROP_FACTORS[rxDiffTier(wave)];
+}
+// Fleet step-interval multiplier (lower = faster start).
+const RX_SPEED_FACTORS = [1, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.1875, 0.125];
+function rxFleetSpeedFactor(wave) {
+  return RX_SPEED_FACTORS[rxDiffTier(wave)];
+}
 function spawnWave() {
   const id = rx.nextWaveId++;
   const cs = 18, rs = 15;
@@ -1600,7 +1626,7 @@ function spawnWave() {
     alive: cells.length,
     cs,
     rs,
-    baseInterval: 0.044 + Math.random() * 0.08,
+    baseInterval: (0.044 + Math.random() * 0.08) * rxFleetSpeedFactor(id),
   });
   state.wave = id;
 }
@@ -1767,10 +1793,11 @@ function rxSpawnDrop(kind, x, y) {
   rx.drops.push({ kind, x, y, vx: Math.cos(a) * RX_DROP_SPEED, vy: Math.sin(a) * RX_DROP_SPEED, bounces: 0, spin: 0 });
 }
 
-// 2% each per enemy kill, rolled independently.
+// Rolled independently for a bomb and a boomerang; the chance decays with the wave.
 function rxRollDrops(x, y) {
-  if (Math.random() < RX_DROP_CHANCE) rxSpawnDrop("bomb", x, y);
-  if (Math.random() < RX_DROP_CHANCE) rxSpawnDrop("boomerang", x, y);
+  const chance = rxDropChance(state.wave);
+  if (Math.random() < chance) rxSpawnDrop("bomb", x, y);
+  if (Math.random() < chance) rxSpawnDrop("boomerang", x, y);
 }
 
 function rxTriggerBomb(x, y) {
@@ -1924,7 +1951,7 @@ function remixUpdate(dt) {
   if (state.wave !== waveBefore) updateHud(); // one HUD update per frame, not per spawn
 
   rx.bossTimer -= dt;
-  if (rx.bossTimer <= 0) { spawnBoss(); rx.bossTimer = 6 + Math.random() * 8; }
+  if (rx.bossTimer <= 0) { spawnBoss(); rx.bossTimer = rxBossInterval(state.wave); }
 
   rx.shuttleTimer -= dt;
   if (rx.shuttleTimer <= 0) { spawnShuttle(); rx.shuttleTimer = 8 + Math.random() * 7; }
