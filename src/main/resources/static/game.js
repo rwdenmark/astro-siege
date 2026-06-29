@@ -1114,13 +1114,27 @@ const REMIX_TRACKS = [
 let remixMusic = null;
 let remixOrder = [];
 let remixTrack = 0;
+let remixBlocked = false; // a play() the browser refused; retried on the next input gesture
+
+// Load and play the i-th track in the shuffled order (wraps both ways).
+function playRemixTrack(i) {
+  if (!remixMusic || !remixOrder.length) return;
+  remixTrack = ((i % remixOrder.length) + remixOrder.length) % remixOrder.length;
+  remixBlocked = false;
+  remixMusic.src = remixOrder[remixTrack];
+  remixMusic.volume = effMusic();
+  remixMusic.play().catch(() => { remixBlocked = true; });
+}
 if (typeof Audio !== "undefined") {
   remixMusic = new Audio();
-  remixMusic.addEventListener("ended", () => {
-    remixTrack = (remixTrack + 1) % remixOrder.length; // advance and loop the shuffled order
-    remixMusic.src = remixOrder[remixTrack];
-    remixMusic.volume = effMusic();
-    remixMusic.play().catch(() => {});
+  remixMusic.preload = "auto";
+  // Advance to the next track on end. The timeupdate check is a fallback for clips whose
+  // "ended" event doesn't fire reliably; it hands off just before the clip runs out.
+  remixMusic.addEventListener("ended", () => playRemixTrack(remixTrack + 1));
+  remixMusic.addEventListener("timeupdate", () => {
+    if (remixMusic.duration && remixMusic.currentTime >= remixMusic.duration - 0.2) {
+      playRemixTrack(remixTrack + 1);
+    }
   });
 }
 function startRemixMusic() {
@@ -1130,12 +1144,19 @@ function startRemixMusic() {
     const j = Math.floor(Math.random() * (i + 1));
     [remixOrder[i], remixOrder[j]] = [remixOrder[j], remixOrder[i]];
   }
-  remixTrack = 0;
-  remixMusic.src = remixOrder[0];
-  remixMusic.volume = effMusic();
-  remixMusic.play().catch(() => {});
+  playRemixTrack(0);
 }
-function resumeRemixMusic() { if (remixMusic && remixMusic.src) remixMusic.play().catch(() => {}); }
+// Browsers can refuse an automatic track change that isn't tied to a gesture. If that
+// happened, resume on the next input (in Remix the player is firing constantly).
+function retryRemixMusic() {
+  if (remixBlocked && remixMusic && gameMode === "remix" && state.mode === "playing") {
+    remixBlocked = false;
+    remixMusic.play().catch(() => { remixBlocked = true; });
+  }
+}
+function resumeRemixMusic() {
+  if (remixMusic && remixMusic.src) { remixBlocked = false; remixMusic.play().catch(() => { remixBlocked = true; }); }
+}
 function stopRemixMusic() { if (remixMusic) remixMusic.pause(); }
 function applyRemixMusicVol() { if (remixMusic) remixMusic.volume = effMusic(); }
 
@@ -1384,6 +1405,7 @@ function unlockAudio() {
   const ctx = ensureAudioCtx();
   if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
   if (music && music.paused && (state.mode === "menu" || state.mode === "gameover")) playMenuMusic();
+  retryRemixMusic();
 }
 window.addEventListener("pointerdown", unlockAudio);
 window.addEventListener("keydown", unlockAudio);
@@ -1658,6 +1680,7 @@ function rxBuildForts() {
 // Bosses are their own object: a small 1x1, 1x2, or 2x2 cluster of boss orbs
 // that steps in like any fleet, separate from the regular waves.
 function spawnBoss() {
+  const id = rx.nextWaveId++;
   const shapes = [[1, 1], [1, 2], [2, 1], [2, 2]];
   const [cols, rows] = shapes[Math.floor(Math.random() * shapes.length)];
   const cs = 22, rs = 20;
@@ -1667,7 +1690,7 @@ function spawnBoss() {
     for (let c = 0; c < cols; c++) cells.push({ col: c, row: r, type: "boss", alive: true });
   }
   rx.fleets.push({
-    id: rx.nextWaveId++,
+    id,
     fx: 6 + Math.random() * Math.max(1, WIDTH - gridW - 12),
     fy: 6 + Math.random() * 14,
     dir: Math.random() < 0.5 ? -1 : 1,
@@ -1679,7 +1702,7 @@ function spawnBoss() {
     alive: cells.length,
     cs,
     rs,
-    baseInterval: 0.07 + Math.random() * 0.1,
+    baseInterval: (0.07 + Math.random() * 0.1) * rxFleetSpeedFactor(id),
   });
 }
 
@@ -1910,9 +1933,10 @@ function rxFireTick() {
       if (c.type === "boss") {
         addScore(15);
         rxBurst(p.x, p.y, RX_BOSS_COLOR, 34);
+        const minSpd = 1 / rxFleetSpeedFactor(state.wave); // same ramp as the fleets, as a velocity scale
         const spread = [[-1, -0.4], [1, -0.4], [-1, 0.6], [1, 0.6]];
         for (const [sx, sy] of spread) {
-          rx.minis.push({ x: p.x, y: p.y, vx: sx * 30, vy: 16 + Math.random() * 14 + sy * 8, r: RX_MINI_R });
+          rx.minis.push({ x: p.x, y: p.y, vx: sx * 30, vy: 16 + Math.random() * 14 + sy * 8, r: RX_MINI_R, spd: minSpd });
         }
       } else {
         addScore(RX_POINTS[c.type] || 10);
@@ -1991,11 +2015,12 @@ function remixUpdate(dt) {
   }
   rx.fleets = rx.fleets.filter((f) => f.alive > 0);
 
-  // Free-falling boss splits.
+  // Free-falling boss splits. Their fall speeds up with the fleet-speed ramp.
   for (const m of rx.minis) {
-    m.x += m.vx * dt;
-    m.y += m.vy * dt;
-    m.vy += 10 * dt;
+    const mdt = dt * (m.spd || 1);
+    m.x += m.vx * mdt;
+    m.y += m.vy * mdt;
+    m.vy += 10 * mdt;
     if (m.x < m.r) { m.x = m.r; m.vx = Math.abs(m.vx); }
     if (m.x > WIDTH - m.r) { m.x = WIDTH - m.r; m.vx = -Math.abs(m.vx); }
     if (m.y + m.r >= RX_BOTTOM) { playSfx("explosion"); gameOver(); return; }
