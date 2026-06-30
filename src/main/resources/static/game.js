@@ -1584,10 +1584,10 @@ function rxRandomRowCount() {
   return 6;
 }
 
-// Difficulty scales through shared wave breakpoints: the ramp starts around wave 250 and
-// tops out near wave 5000, where the game is meant to be near unplayable. rxDiffTier maps
+// Difficulty scales through shared wave breakpoints: the ramp starts around wave 125 and
+// tops out near wave 2500, where the game is meant to be near unplayable. rxDiffTier maps
 // a wave to 0..8; each mechanic indexes its own factor table at that tier.
-const RX_DIFF_BREAKS = [250, 750, 1500, 2250, 3000, 3750, 4500, 5000];
+const RX_DIFF_BREAKS = [125, 375, 750, 1125, 1500, 1875, 2250, 2500];
 function rxDiffTier(wave) {
   let tier = 0;
   for (const b of RX_DIFF_BREAKS) if (wave >= b) tier++;
@@ -1855,7 +1855,7 @@ function rxDamageArea(cx, cy, radius) {
     }
   }
   for (const m of rx.minis) {
-    if (m.dead) continue;
+    if (m.dead || m.inv > 0) continue;
     if (rxDist2(cx, cy, m.x, m.y) <= r2) {
       m.dead = true; killed++;
       addScore(10);
@@ -1911,7 +1911,7 @@ function rxFireTick() {
 
   // Minis first, so a boss split created below this tick isn't instantly destroyed.
   for (const m of rx.minis) {
-    if (m.dead) continue;
+    if (m.dead || m.inv > 0) continue;
     const rr = RX_MINI_R + RX_HIT_PAD;
     if (rxDist2(cx, cy, m.x, m.y) <= rr * rr) {
       m.dead = true;
@@ -1936,7 +1936,7 @@ function rxFireTick() {
         const minSpd = 1 / rxFleetSpeedFactor(state.wave); // same ramp as the fleets, as a velocity scale
         const spread = [[-1, -0.4], [1, -0.4], [-1, 0.6], [1, 0.6]];
         for (const [sx, sy] of spread) {
-          rx.minis.push({ x: p.x, y: p.y, vx: sx * 30, vy: 16 + Math.random() * 14 + sy * 8, r: RX_MINI_R, spd: minSpd });
+          rx.minis.push({ x: p.x, y: p.y, vx: sx * 30, vy: 16 + Math.random() * 14 + sy * 8, r: RX_MINI_R, spd: minSpd, inv: 1 });
         }
       } else {
         addScore(RX_POINTS[c.type] || 10);
@@ -2017,6 +2017,7 @@ function remixUpdate(dt) {
 
   // Free-falling boss splits. Their fall speeds up with the fleet-speed ramp.
   for (const m of rx.minis) {
+    if (m.inv > 0) m.inv -= dt; // brief spawn immunity so a split isn't instantly shot
     const mdt = dt * (m.spd || 1);
     m.x += m.vx * mdt;
     m.y += m.vy * mdt;
@@ -2208,7 +2209,9 @@ function remixRender() {
     }
   }
   for (const m of rx.minis) {
+    if (m.inv > 0) ctx.globalAlpha = rainbowIdx % 2 === 0 ? 0.45 : 0.8; // flicker while immune
     rxDrawOrb(RX_MINI_RAINBOW[rainbowIdx], RX_RAINBOW[rainbowIdx], "orbSmall", m.x, m.y, 1.2);
+    ctx.globalAlpha = 1;
   }
   // The UFO glows white, then a matching black mask keeps the windows dark on top.
   ctx.shadowColor = "#ffffff";
