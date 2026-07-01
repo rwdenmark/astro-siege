@@ -143,9 +143,8 @@ The menu music (`menu-theme.mp3`) and the three Remix tracks
 `music_unlimited-stranger-things-124008.mp3`) are Pixabay tracks used under the Pixabay
 Content License (free for commercial use, no attribution required) and are not covered
 by the MIT License above. The menu click sound
-(`audio/card_select.mp3`) is reused from the Ranger Survivor project and is likewise
-not covered by the MIT License; confirm its original source and license before any
-commercial use. The sprites and the synthesised sound effects are original and covered
+(`audio/card_select.mp3`) is likewise not covered by the MIT License. Confirm its
+original source and license before any commercial use. The sprites and the synthesised sound effects are original and covered
 by the MIT License with the code.
 
 ## Disclaimer

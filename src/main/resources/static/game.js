@@ -1162,8 +1162,8 @@ function applyRemixMusicVol() { if (remixMusic) remixMusic.volume = effMusic(); 
 
 function effSfx() { return sfxMuted ? 0 : sfxVolume; }
 
-// One-shot menu click sound (the card-select SFX reused from Ranger Survivor),
-// gated by the SFX volume and mute. Cloned per play so quick clicks can overlap.
+// One-shot menu click sound, gated by the SFX volume and mute.
+// Cloned per play so quick clicks can overlap.
 const MENU_SFX_SRC = "audio/card_select.mp3";
 let menuSfx = null;
 if (typeof Audio !== "undefined") { menuSfx = new Audio(MENU_SFX_SRC); menuSfx.preload = "auto"; }
@@ -1598,7 +1598,7 @@ const RX_BOSS_FACTORS = [1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.35, 0.3];
 function rxBossInterval(wave) {
   return (6 + Math.random() * 8) * RX_BOSS_FACTORS[rxDiffTier(wave)];
 }
-// Drop-chance multiplier on the 2% base, tapering to 0.1% by wave 5000.
+// Drop-chance multiplier on the 2% base, tapering to 0.1% by wave 2500.
 const RX_DROP_FACTORS = [1, 0.75, 0.5, 0.375, 0.25, 0.1875, 0.125, 0.0875, 0.05];
 function rxDropChance(wave) {
   return RX_DROP_CHANCE * RX_DROP_FACTORS[rxDiffTier(wave)];
